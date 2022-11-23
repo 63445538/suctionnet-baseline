@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--data_root', default='', help='Directory to save dataset')
 parser.add_argument('--saveroot', default='', help='Directory to save score map results')
 parser.add_argument('--save_visu', action='store_true', help='Whether to save visualizations')
-parser.add_argument('--camera', default='realsense', help='Camera to use [default: realsense]')
+parser.add_argument('--camera', default='kinect', help='Camera to use [default: realsense]')
 parser.add_argument('--sigma', type=int, default=4, help='Gaussian Kernel sigma')
 parser.add_argument('--pool_size', type=int, default=10, help='How many threads to use')
 FLAGS = parser.parse_args()
@@ -275,7 +275,7 @@ if __name__ == "__main__":
     camera = FLAGS.camera   
     
     scene_list = []
-    for i in range(0, 100):
+    for i in range(0, 1):
         scene_list.append(i)
 
     pool_size = FLAGS.pool_size
@@ -283,14 +283,14 @@ if __name__ == "__main__":
     pool = []
     for _ in range(pool_size):
         scene_idx = scene_list.pop(0)
-        pool.append(Process(target=score_mapping, args=(scene_idx,camera)))
+        pool.append(Process(target=score_mapping, args=(scene_idx, camera)))
     [p.start() for p in pool]
     while len(scene_list) > 0:
         for idx, p in enumerate(pool):
             if not p.is_alive():
                 pool.pop(idx)
                 scene_idx = scene_list.pop(0)
-                p = Process(target=score_mapping, args=(scene_idx,camera))
+                p = Process(target=score_mapping, args=(scene_idx, camera))
                 p.start()
                 pool.append(p)
                 break

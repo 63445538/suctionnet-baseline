@@ -14,9 +14,9 @@ from policy import estimate_suction
 parser = argparse.ArgumentParser()
 parser.add_argument('--split', default='test_seen', help='dataset split [default: test_seen]')
 parser.add_argument('--camera', default='kinect', help='camera to use [default: kinect]')
-parser.add_argument('--save_root', default='/DATA2/Benchmark/suction/inference_results/normals_std', help='where to save')
-parser.add_argument('--dataset_root', default='/DATA2/Benchmark/graspnet', help='where dataset is')
-parser.add_argument('--save_visu', action='store_true', help='whether to save visualization')
+parser.add_argument('--save_root', default='save', help='where to save')
+parser.add_argument('--dataset_root', default='/media/rcao/Data/Dataset/graspnet', help='where dataset is')
+parser.add_argument('--save_visu', action='store_true', default=True, help='whether to save visualization')
 FLAGS = parser.parse_args()
 
 split = FLAGS.split
@@ -171,16 +171,16 @@ def inference(scene_idx):
         suction_translations = point_cloud[idx0, idx1, :]
 
         # print('suction_scores:', suction_scores.shape)
-        suction_arr = np.concatenate([suction_scores[..., np.newaxis], suction_directions, suction_translations], axis=-1)
+        # suction_arr = np.concatenate([suction_scores[..., np.newaxis], suction_directions, suction_translations], axis=-1)
 
-        suction_dir = os.path.join(save_root, split, 'scene_%04d'%scene_idx, camera, 'suction')
-        os.makedirs(suction_dir, exist_ok=True)
-        print('Saving:', suction_dir+'/%04d'%anno_idx+'.npz')
-        # start_time = time.time()
-        np.savez(suction_dir+'/%04d'%anno_idx+'.npz', suction_arr)
+        # suction_dir = os.path.join(save_root, split, 'scene_%04d'%scene_idx, camera, 'suction')
+        # os.makedirs(suction_dir, exist_ok=True)
+        # print('Saving:', suction_dir+'/%04d'%anno_idx+'.npz')
+        # # start_time = time.time()
+        # np.savez(suction_dir+'/%04d'%anno_idx+'.npz', suction_arr)
 
-        if anno_idx < 3 and FLAGS.save_visu:
-            
+        # if anno_idx < 3 and FLAGS.save_visu:
+        if FLAGS.save_visu:
             # pridictions
             score_image = heatmap
             score_image *= 255
@@ -221,21 +221,21 @@ def inference(scene_idx):
 
 if __name__ == "__main__":
     
-    scene_list = []
-    if split == 'test':
-        for i in range(100, 190):
-            scene_list.append(i)
-    elif split == 'test_seen':
-        for i in range(100, 130):
-            scene_list.append(i)
-    elif split == 'test_similiar':
-        for i in range(130, 160):
-            scene_list.append(i)
-    elif split == 'test_novel':
-        for i in range(160, 190):
-            scene_list.append(i)
-    else:
-        print('invalid split')
-    
+    # scene_list = []
+    # if split == 'test':
+    #     for i in range(100, 190):
+    #         scene_list.append(i)
+    # elif split == 'test_seen':
+    #     for i in range(100, 130):
+    #         scene_list.append(i)
+    # elif split == 'test_similiar':
+    #     for i in range(130, 160):
+    #         scene_list.append(i)
+    # elif split == 'test_novel':
+    #     for i in range(160, 190):
+    #         scene_list.append(i)
+    # else:
+    #     print('invalid split')
+    scene_list = [1]
     for scene_idx in scene_list:
         inference(scene_idx)
