@@ -16,26 +16,25 @@ from tqdm import tqdm
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
-from data_utils import CameraInfo, transform_point_cloud, create_point_cloud_from_depth_image,\
-                            get_workspace_mask, remove_invisible_grasp_points
+from .data_utils import CameraInfo, transform_point_cloud, create_point_cloud_from_depth_image, \
+    get_workspace_mask, remove_invisible_grasp_points
 
 
 class SuctionDataset(Dataset):
-    def __init__(self, root, valid_obj_idxs, grasp_labels, camera='kinect', split='train', num_points=20000,
+    def __init__(self, root, valid_obj_idxs, camera='kinect', split='train', num_points=1024,
                  remove_outlier=False, remove_invisible=True, augment=False, load_label=True):
-        assert(num_points <= 50000)
         self.root = root
         self.split = split
         self.num_points = num_points
         self.remove_outlier = remove_outlier
         self.remove_invisible = remove_invisible
         self.valid_obj_idxs = valid_obj_idxs
-        self.grasp_labels = grasp_labels
         self.camera = camera
         self.augment = augment
         self.load_label = load_label
         self.collision_labels = {}
-        self.voxel_size = 0.005
+        self.voxel_size = 0.003
+        self.minimum_num_pt = 50
 
         if split == 'train':
             self.sceneIds = list(range(1))
@@ -59,22 +58,22 @@ class SuctionDataset(Dataset):
         self.metapath = []
         self.scenename = []
         self.frameid = []
-        # self.graspnesspath = []
+        self.suctionnesspath = []
         for x in tqdm(self.sceneIds, desc='Loading data path and collision labels...'):
             for img_num in range(256):
-                self.colorpath.append(os.path.join(root, 'scenes', x, camera, 'rgb', str(img_num).zfill(4)+'.png'))
-                self.depthpath.append(os.path.join(root, 'scenes', x, camera, 'depth', str(img_num).zfill(4)+'.png'))
-                self.labelpath.append(os.path.join(root, 'scenes', x, camera, 'label', str(img_num).zfill(4)+'.png'))
-                self.metapath.append(os.path.join(root, 'scenes', x, camera, 'meta', str(img_num).zfill(4)+'.mat'))
+                self.colorpath.append(os.path.join(root, 'scenes', x, camera, 'rgb', str(img_num).zfill(4) + '.png'))
+                self.depthpath.append(os.path.join(root, 'scenes', x, camera, 'depth', str(img_num).zfill(4) + '.png'))
+                self.labelpath.append(os.path.join(root, 'scenes', x, camera, 'label', str(img_num).zfill(4) + '.png'))
+                self.metapath.append(os.path.join(root, 'scenes', x, camera, 'meta', str(img_num).zfill(4) + '.mat'))
                 self.scenename.append(x.strip())
                 self.frameid.append(img_num)
-                # if self.load_label:
-                #     self.graspnesspath.append(os.path.join(root, 'graspness', x, camera, str(img_num).zfill(4) + '.npy'))
-            if self.load_label:
-                collision_labels = np.load(os.path.join(root, 'collision_label', x.strip(),  'collision_labels.npz'))
-                self.collision_labels[x.strip()] = {}
-                for i in range(len(collision_labels)):
-                    self.collision_labels[x.strip()][i] = collision_labels['arr_{}'.format(i)]
+                if self.load_label:
+                    self.suctionnesspath.append(
+                        os.path.join(root, 'suction', x, camera, str(img_num).zfill(4) + '.npz'))
+                # collision_labels = np.load(os.path.join(root, 'collision_label', x.strip(),  'collision_labels.npz'))
+                # self.collision_labels[x.strip()] = {}
+                # for i in range(len(collision_labels)):
+                #     self.collision_labels[x.strip()][i] = collision_labels['arr_{}'.format(i)]
 
     def scene_list(self):
         return self.scenename
@@ -93,7 +92,7 @@ class SuctionDataset(Dataset):
                 object_poses_list[i] = np.dot(flip_mat, object_poses_list[i]).astype(np.float32)
 
         # Rotation along up-axis/Z-axis
-        rot_angle = (np.random.random()*np.pi/3) - np.pi/6 # -30 ~ +30 degree
+        rot_angle = (np.random.random() * np.pi / 3) - np.pi / 6  # -30 ~ +30 degree
         c, s = np.cos(rot_angle), np.sin(rot_angle)
         rot_mat = np.array([[1, 0, 0],
                             [0, c, -s],
@@ -122,7 +121,8 @@ class SuctionDataset(Dataset):
         except Exception as e:
             print(repr(e))
             print(scene)
-        camera = CameraInfo(1280.0, 720.0, intrinsic[0][0], intrinsic[1][1], intrinsic[0][2], intrinsic[1][2], factor_depth)
+        camera = CameraInfo(1280.0, 720.0, intrinsic[0][0], intrinsic[1][1], intrinsic[0][2], intrinsic[1][2],
+                            factor_depth)
 
         # generate cloud
         cloud = create_point_cloud_from_depth_image(depth, camera, organized=True)
@@ -149,7 +149,7 @@ class SuctionDataset(Dataset):
             idxs = np.random.choice(len(cloud_masked), self.num_points, replace=False)
         else:
             idxs1 = np.arange(len(cloud_masked))
-            idxs2 = np.random.choice(len(cloud_masked), self.num_points-len(cloud_masked), replace=True)
+            idxs2 = np.random.choice(len(cloud_masked), self.num_points - len(cloud_masked), replace=True)
             idxs = np.concatenate([idxs1, idxs2], axis=0)
         cloud_sampled = cloud_masked[idxs]
         color_sampled = color_masked[idxs]
@@ -167,23 +167,27 @@ class SuctionDataset(Dataset):
         seg = np.array(Image.open(self.labelpath[index]))
         meta = scio.loadmat(self.metapath[index])
         scene = self.scenename[index]
-        # graspness = np.load(self.graspnesspath[index])  # for each point in workspace masked point cloud
+        suctionness = np.load(self.suctionnesspath[index])  # for each point in workspace masked point cloud
+        seal_score = suctionness['seal_score']
+        wrench_score = suctionness['wrench_score']
+
         try:
             obj_idxs = meta['cls_indexes'].flatten().astype(np.int32)
-            poses = meta['poses']
+            # poses = meta['poses']
             intrinsic = meta['intrinsic_matrix']
             factor_depth = meta['factor_depth']
         except Exception as e:
             print(repr(e))
             print(scene)
-        camera = CameraInfo(1280.0, 720.0, intrinsic[0][0], intrinsic[1][1], intrinsic[0][2], intrinsic[1][2], factor_depth)
+        camera = CameraInfo(1280.0, 720.0, intrinsic[0][0], intrinsic[1][1], intrinsic[0][2], intrinsic[1][2],
+                            factor_depth)
 
         # generate cloud
         cloud = create_point_cloud_from_depth_image(depth, camera, organized=True)
 
         # get valid points
         depth_mask = (depth > 0)
-        seg_mask = (seg > 0)
+        # seg_mask = (seg > 0)
         if self.remove_outlier:
             camera_poses = np.load(os.path.join(self.root, 'scenes', scene, self.camera, 'camera_poses.npy'))
             align_mat = np.load(os.path.join(self.root, 'scenes', scene, self.camera, 'cam0_wrt_table.npy'))
@@ -196,74 +200,50 @@ class SuctionDataset(Dataset):
         color_masked = color[mask]
         seg_masked = seg[mask]
 
-        # sample points
-        if len(cloud_masked) >= self.num_points:
-            idxs = np.random.choice(len(cloud_masked), self.num_points, replace=False)
+        while 1:
+            choose_inst_idx = np.random.choice(obj_idxs)
+            inst_mask = seg_masked == choose_inst_idx
+            # mask_depth = ma.getmaskarray(ma.masked_not_equal(depth, 0))
+            # mask_label = ma.getmaskarray(ma.masked_equal(label, obj[idx]))
+            inst_mask_len = inst_mask.sum()
+            if inst_mask_len > self.minimum_num_pt:
+                break
+
+        if inst_mask_len >= self.num_points:
+            idxs = np.random.choice(inst_mask_len, self.num_points, replace=False)
         else:
-            idxs1 = np.arange(len(cloud_masked))
-            idxs2 = np.random.choice(len(cloud_masked), self.num_points-len(cloud_masked), replace=True)
+            idxs1 = np.arange(inst_mask_len)
+            idxs2 = np.random.choice(inst_mask_len, self.num_points - inst_mask_len, replace=True)
             idxs = np.concatenate([idxs1, idxs2], axis=0)
-        cloud_sampled = cloud_masked[idxs]
-        color_sampled = color_masked[idxs]
-        seg_sampled = seg_masked[idxs]
-        # graspness_sampled = graspness[idxs]
 
-        objectness_label = seg_sampled.copy()
-        objectness_label[objectness_label > 1] = 1
+        # inst_mask = inst_mask[idxs]
+        inst_cloud = cloud_masked[inst_mask][idxs]
+        inst_color = color_masked[inst_mask][idxs]
 
-        object_poses_list = []
-        grasp_points_list = []
-        grasp_offsets_list = []
-        grasp_scores_list = []
-        # grasp_tolerance_list = []
-        for i, obj_idx in enumerate(obj_idxs):
-            if obj_idx not in self.valid_obj_idxs:
-                continue
-            if (seg_sampled == obj_idx).sum() < 50:
-                continue
-            object_poses_list.append(poses[:, :, i])
-            # points, offsets, scores, tolerance = self.grasp_labels[obj_idx]
-            points, offsets, scores = self.grasp_labels[obj_idx]
-            # collision = self.collision_labels[scene][i]  # (Np, V, A, D)
+        inst_seal_score = seal_score[inst_mask][idxs]
+        inst_wrench_score = wrench_score[inst_mask][idxs]
 
-            idxs = np.random.choice(len(points), min(max(int(len(points)/4), 300), len(points)), replace=False)
-            grasp_points_list.append(points[idxs])
-            grasp_offsets_list.append(offsets[idxs])
-            collision = collision[idxs].copy()
-            scores = scores[idxs].copy()
-            scores[collision] = 0
-            grasp_scores_list.append(scores)
-            # tolerance = tolerance[idxs].copy()
-            # tolerance[collision] = 0
-            # grasp_tolerance_list.append(tolerance)
-
-        if self.augment:
-            cloud_sampled, object_poses_list = self.augment_data(cloud_sampled, object_poses_list)
+        # if self.augment:
+        #     cloud_sampled, object_poses_list = self.augment_data(cloud_sampled, object_poses_list)
 
         ret_dict = {}
-        ret_dict['point_clouds'] = cloud_sampled.astype(np.float32)
-        ret_dict['cloud_colors'] = color_sampled.astype(np.float32)
-        ret_dict['coors'] = cloud_sampled.astype(np.float32) / self.voxel_size
-        ret_dict['feats'] = np.ones_like(cloud_sampled).astype(np.float32)
+        ret_dict['point_clouds'] = inst_cloud.astype(np.float32)
+        ret_dict['cloud_colors'] = inst_color.astype(np.float32)
+        ret_dict['coors'] = inst_cloud.astype(np.float32) / self.voxel_size
+        ret_dict['feats'] = inst_color.astype(np.float32)
 
-        # ret_dict['graspness_label'] = graspness_sampled.astype(np.float32)
-        ret_dict['objectness_label'] = objectness_label.astype(np.int64)
-        ret_dict['object_poses_list'] = object_poses_list
-        ret_dict['grasp_points_list'] = grasp_points_list
-        ret_dict['grasp_offsets_list'] = grasp_offsets_list
-        ret_dict['grasp_labels_list'] = grasp_scores_list
-        # ret_dict['grasp_tolerance_list'] = grasp_tolerance_list
-
+        ret_dict['seal_score_label'] = inst_seal_score[:, 0].astype(np.float32)
+        ret_dict['wrench_score_label'] = inst_wrench_score[:, 0].astype(np.float32)
         return ret_dict
 
 
-def load_grasp_labels(root):
-    obj_names = list(range(88))
+def load_obj_list():
+    # obj_names = list(range(88))
+    obj_names = list([15, 1, 6, 16, 21, 49, 67, 71, 47])
     valid_obj_idxs = []
-    grasp_labels = {}
     for obj_idx in tqdm(obj_names, desc='Loading grasping labels...'):
         # if i == 18: continue
-        valid_obj_idxs.append(obj_idx+1) #here align with label png
+        valid_obj_idxs.append(obj_idx + 1)  # here align with label png
         # tolerance = np.load(os.path.join(root, 'tolerance', '{}_tolerance.npy'.format(str(obj_idx).zfill(3))))
         # label = np.load(os.path.join(root, 'grasp_label', '{}_labels.npz'.format(str(i).zfill(3))))
         # grasp_labels[i + 1] = (label['points'].astype(np.float32), label['offsets'].astype(np.float32),
@@ -271,10 +251,10 @@ def load_grasp_labels(root):
         # label = np.load(os.path.join(root, 'grasp_label', '{}_labels.npz'.format(str(obj_idx).zfill(3))))
         # grasp_labels[obj_idx+1] = (label['points'].astype(np.float32), label['offsets'].astype(np.float32),
         #                           label['scores'].astype(np.float32), tolerance)
-        label = np.load(os.path.join(root, 'grasp_label_simplified', '{}_labels.npz'.format(str(obj_idx).zfill(3))))
-        grasp_labels[obj_idx+1] = (label['points'].astype(np.float32), label['width'].astype(np.float32),
-                                  label['scores'].astype(np.float32))
-    return valid_obj_idxs, grasp_labels
+        # label = np.load(os.path.join(root, 'grasp_label_simplified', '{}_labels.npz'.format(str(obj_idx).zfill(3))))
+        # grasp_labels[obj_idx + 1] = (label['points'].astype(np.float32), label['width'].astype(np.float32),
+        #                              label['scores'].astype(np.float32))
+    return valid_obj_idxs
 
 
 def collate_fn(batch):
@@ -288,38 +268,40 @@ def collate_fn(batch):
     raise TypeError("batch must contain tensors, dicts or lists; found {}".format(type(batch[0])))
 
 
-# import MinkowskiEngine as ME
-# def minkowski_collate_fn(list_data):
-#     coordinates_batch, features_batch = ME.utils.sparse_collate([d["coors"] for d in list_data],
-#                                                                 [d["feats"] for d in list_data], dtype=torch.float32)
-#     coordinates_batch, features_batch, _, quantize2original = ME.utils.sparse_quantize(
-#         coordinates_batch, features_batch, return_index=True, return_inverse=True)
-#     res = {
-#         "coors": coordinates_batch,
-#         "feats": features_batch,
-#         "quantize2original": quantize2original
-#     }
-#
-#     def collate_fn_(batch):
-#         if type(batch[0]).__module__ == 'numpy':
-#             return torch.stack([torch.from_numpy(b) for b in batch], 0)
-#         elif isinstance(batch[0], container_abcs.Sequence):
-#             return [[torch.from_numpy(sample) for sample in b] for b in batch]
-#         elif isinstance(batch[0], container_abcs.Mapping):
-#             for key in batch[0]:
-#                 if key == 'coors' or key == 'feats':
-#                     continue
-#                 res[key] = collate_fn_([d[key] for d in batch])
-#             return res
-#     res = collate_fn_(list_data)
-#
-#     return res
+import MinkowskiEngine as ME
+def minkowski_collate_fn(list_data):
+    coordinates_batch, features_batch = ME.utils.sparse_collate([d["coors"] for d in list_data],
+                                                                [d["feats"] for d in list_data], dtype=torch.float32)
+    coordinates_batch, features_batch, _, quantize2original = ME.utils.sparse_quantize(
+        coordinates_batch, features_batch, return_index=True, return_inverse=True)
+    res = {
+        "coors": coordinates_batch,
+        "feats": features_batch,
+        "quantize2original": quantize2original
+    }
+
+    def collate_fn_(batch):
+        if type(batch[0]).__module__ == 'numpy':
+            return torch.stack([torch.from_numpy(b) for b in batch], 0)
+        elif isinstance(batch[0], container_abcs.Sequence):
+            return [[torch.from_numpy(sample) for sample in b] for b in batch]
+        elif isinstance(batch[0], container_abcs.Mapping):
+            for key in batch[0]:
+                if key == 'coors' or key == 'feats':
+                    continue
+                res[key] = collate_fn_([d[key] for d in batch])
+            return res
+
+    res = collate_fn_(list_data)
+
+    return res
 
 
 if __name__ == "__main__":
     root = '/media/rcao/Data/Dataset/graspnet'
-    valid_obj_idxs, grasp_labels = load_grasp_labels(root)
-    train_dataset = SuctionDataset(root, valid_obj_idxs, grasp_labels, split='train', remove_outlier=True, remove_invisible=True, num_points=20000)
+    valid_obj_idxs = load_obj_list()
+    train_dataset = SuctionDataset(root, valid_obj_idxs, split='train', remove_outlier=True, remove_invisible=True,
+                                   num_points=1024)
     print(len(train_dataset))
 
     end_points = train_dataset[233]
@@ -327,9 +309,9 @@ if __name__ == "__main__":
     seg = end_points['objectness_label']
     print(cloud.shape)
     print(cloud.dtype)
-    print(cloud[:,0].min(), cloud[:,0].max())
-    print(cloud[:,1].min(), cloud[:,1].max())
-    print(cloud[:,2].min(), cloud[:,2].max())
+    print(cloud[:, 0].min(), cloud[:, 0].max())
+    print(cloud[:, 1].min(), cloud[:, 1].max())
+    print(cloud[:, 2].min(), cloud[:, 2].max())
     print(seg.shape)
     print((seg > 0).sum())
     print(seg.dtype)

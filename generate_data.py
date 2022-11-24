@@ -3,6 +3,7 @@ import os
 from PIL import Image
 import scipy.io as scio
 import sys
+
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
 from utils.data_utils import get_workspace_mask, CameraInfo, create_point_cloud_from_depth_image
@@ -12,6 +13,7 @@ from graspnetAPI.utils.xmlhandler import xmlReader
 from graspnetAPI.utils.utils import get_obj_pose_list, transform_points
 import argparse
 import open3d as o3d
+
 # from tqdm import tqdm
 
 device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
@@ -26,6 +28,7 @@ parser.add_argument('--camera_type', default='realsense', help='Camera split [re
 def _isArrayLike(obj):
     return hasattr(obj, '__iter__') and hasattr(obj, '__len__')
 
+
 def loadSealLabels(objIds=None):
     '''
     **Input:**
@@ -34,13 +37,15 @@ def loadSealLabels(objIds=None):
     - a dict of seal labels of each object.
     '''
     # load object-level grasp labels of the given obj ids
-    assert _isArrayLike(objIds) or isinstance(objIds, int), 'objIds must be an integer or a list/numpy array of integers'
+    assert _isArrayLike(objIds) or isinstance(objIds,
+                                              int), 'objIds must be an integer or a list/numpy array of integers'
     objIds = objIds if _isArrayLike(objIds) else [objIds]
     graspLabels = {}
     # for i in tqdm(objIds, desc='Loading seal labels...'):
     for i in objIds:
         file = np.load(os.path.join(dataset_root, 'seal_label', '{}_seal.npz'.format(str(i).zfill(3))))
-        graspLabels[i] = (file['points'].astype(np.float32), file['normals'].astype(np.float32), file['scores'].astype(np.float32))
+        graspLabels[i] = (
+        file['points'].astype(np.float32), file['normals'].astype(np.float32), file['scores'].astype(np.float32))
     return graspLabels
 
 
@@ -52,7 +57,8 @@ def loadWrenchLabels(sceneIds):
     **Output:**
     - dict of the wrench labels.
     '''
-    assert _isArrayLike(sceneIds) or isinstance(sceneIds, int), 'sceneIds must be an integer or a list/numpy array of integers'
+    assert _isArrayLike(sceneIds) or isinstance(sceneIds,
+                                                int), 'sceneIds must be an integer or a list/numpy array of integers'
     sceneIds = sceneIds if _isArrayLike(sceneIds) else [sceneIds]
     wrenchLabels = {}
     # for sid in tqdm(sceneIds, desc='Loading wrench labels...'):
@@ -61,7 +67,7 @@ def loadWrenchLabels(sceneIds):
         wrenchLabel = []
         for j in range(len(labels)):
             wrenchLabel.append(labels['arr_{}'.format(j)])
-        wrenchLabels['scene_'+str(sid).zfill(4)] = wrenchLabel
+        wrenchLabels['scene_' + str(sid).zfill(4)] = wrenchLabel
     return wrenchLabels
 
 
@@ -73,7 +79,8 @@ def loadCollisionLabels(sceneIds):
     **Output:**
     - dict of the collision labels.
     '''
-    assert _isArrayLike(sceneIds) or isinstance(sceneIds, int), 'sceneIds must be an integer or a list/numpy array of integers'
+    assert _isArrayLike(sceneIds) or isinstance(sceneIds,
+                                                int), 'sceneIds must be an integer or a list/numpy array of integers'
     sceneIds = sceneIds if _isArrayLike(sceneIds) else [sceneIds]
     collisionLabels = {}
     # for sid in tqdm(sceneIds, desc='Loading collision labels...'):
@@ -82,7 +89,7 @@ def loadCollisionLabels(sceneIds):
         collisionLabel = []
         for j in range(len(labels)):
             collisionLabel.append(labels['arr_{}'.format(j)])
-        collisionLabels['scene_'+str(sid).zfill(4)] = collisionLabel
+        collisionLabels['scene_' + str(sid).zfill(4)] = collisionLabel
     return collisionLabels
 
 
@@ -92,7 +99,7 @@ def point_matching(scene_points, grasp_points, seal_scores, wrench_scores):
     scene_seal_scores = np.zeros((scene_points_num, 1))
     scene_wrench_scores = np.zeros((scene_points_num, 1))
     part_num = int(scene_points_num / partial_num)
-    for i in range(1, part_num + 2):   # lack of cuda memory
+    for i in range(1, part_num + 2):  # lack of cuda memory
         if i == part_num + 1:
             cloud_masked_partial = scene_points[partial_num * part_num:]
             if len(cloud_masked_partial) == 0:
@@ -102,15 +109,17 @@ def point_matching(scene_points, grasp_points, seal_scores, wrench_scores):
         cloud_masked_partial = torch.from_numpy(cloud_masked_partial).to(device)
         cloud_masked_partial = cloud_masked_partial.transpose(0, 1).contiguous().unsqueeze(0)
         nn_inds = knn(grasp_points, cloud_masked_partial, k=1).squeeze() - 1
-        scene_seal_scores[partial_num * (i - 1):(i * partial_num)] = torch.index_select(seal_scores, 0, nn_inds).cpu().numpy()
-        scene_wrench_scores[partial_num * (i - 1):(i * partial_num)] = torch.index_select(wrench_scores, 0, nn_inds).cpu().numpy()
+        scene_seal_scores[partial_num * (i - 1):(i * partial_num)] = torch.index_select(seal_scores, 0,
+                                                                                        nn_inds).cpu().numpy()
+        scene_wrench_scores[partial_num * (i - 1):(i * partial_num)] = torch.index_select(wrench_scores, 0,
+                                                                                          nn_inds).cpu().numpy()
     return scene_seal_scores, scene_wrench_scores
 
 
 if __name__ == '__main__':
     cfgs = parser.parse_args()
-    dataset_root = cfgs.dataset_root   # set dataset root
-    camera_type = cfgs.camera_type   # kinect / realsense
+    dataset_root = cfgs.dataset_root  # set dataset root
+    camera_type = cfgs.camera_type  # kinect / realsense
     save_path_root = os.path.join(dataset_root, 'suction')
 
     origin_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05)
@@ -150,7 +159,7 @@ if __name__ == '__main__':
 
             scene = o3d.geometry.PointCloud()
             scene.points = o3d.utility.Vector3dVector(cloud_masked.reshape((-1, 3)))
-            scene.colors = o3d.utility.Vector3dVector(rgb_masked/255.0)
+            scene.colors = o3d.utility.Vector3dVector(rgb_masked / 255.0)
 
             # downsampled_scene = scene.voxel_down_sample(voxel_size=0.003)
             # o3d.visualization.draw_geometries([origin_frame, downsampled_scene])
@@ -207,7 +216,8 @@ if __name__ == '__main__':
             grasp_points_wrench = torch.from_numpy(grasp_points_wrench).to(device)
 
             cloud_masked_seal_scores, cloud_masked_wrench_scores = point_matching(cloud_masked, grasp_points,
-                                                                                  grasp_points_seal, grasp_points_wrench)
+                                                                                  grasp_points_seal,
+                                                                                  grasp_points_wrench)
 
             # max_seal_scores = np.max(cloud_masked_seal_scores)
             # min_seal_scores = np.min(cloud_masked_seal_scores)
@@ -228,9 +238,8 @@ if __name__ == '__main__':
             # scene.colors = o3d.utility.Vector3dVector(cmap_rgb)
             # o3d.visualization.draw_geometries([origin_frame, scene])
 
-
             save_path = os.path.join(save_path_root, 'scene_' + str(scene_id).zfill(4), camera_type)
             if not os.path.exists(save_path):
                 os.makedirs(save_path)
             np.savez_compressed(os.path.join(save_path, str(ann_id).zfill(4) + '.npz'),
-                     seal_score=cloud_masked_seal_scores, wrench_score=cloud_masked_wrench_scores)
+                                seal_score=cloud_masked_seal_scores, wrench_score=cloud_masked_wrench_scores)
