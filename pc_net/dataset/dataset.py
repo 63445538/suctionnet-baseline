@@ -33,11 +33,11 @@ class SuctionDataset(Dataset):
         self.augment = augment
         self.load_label = load_label
         self.collision_labels = {}
-        self.voxel_size = 0.003
+        self.voxel_size = 0.002
         self.minimum_num_pt = 50
 
         if split == 'train':
-            self.sceneIds = list(range(1))
+            self.sceneIds = list(range(100))
         elif split == 'test':
             self.sceneIds = list(range(100, 190))
         # if split == 'train':

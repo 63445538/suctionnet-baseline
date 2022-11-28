@@ -2,3 +2,4 @@ __pycache__
 .vscode
 *.pyc
 /normal_std/save/
+pc_net/log
