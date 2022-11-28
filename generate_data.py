@@ -14,6 +14,7 @@ from graspnetAPI.utils.utils import get_obj_pose_list, transform_points
 import argparse
 import open3d as o3d
 
+# import matplotlib.pyplot as plt
 # from tqdm import tqdm
 
 device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
@@ -21,7 +22,7 @@ torch.cuda.set_device(device)
 partial_num = 100000
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset_root', default='/data/rcao/dataset/graspnet')
+parser.add_argument('--dataset_root', default='/media/rcao/Data/Dataset/graspnet')
 parser.add_argument('--camera_type', default='realsense', help='Camera split [realsense/kinect]')
 
 
@@ -177,9 +178,7 @@ if __name__ == '__main__':
             #     grasp_labels[i] = (grasp_file['points'].astype(np.float32), grasp_file['width'].astype(np.float32),
             #                        grasp_file['scores'].astype(np.float32))
             #     seal_file = np.load(os.path.join(dataset_root, 'seal_label', '{}_seal.npz'.format(str(i).zfill(3))))
-            #
-            #     seal_labels[i] =
-            #
+
             seal_labels = loadSealLabels(obj_list)
             wrench_labels = loadWrenchLabels(scene_id)
             wrench_dump = wrench_labels['scene_{:04}'.format(scene_id)]
@@ -194,23 +193,33 @@ if __name__ == '__main__':
             grasp_points = []
             grasp_points_seal = []
             grasp_points_wrench = []
-
-            for i, (obj_idx, trans) in enumerate(zip(obj_list, pose_list)):
+            # obj_pose_vis = []
+            for i, (obj_idx, obj_pose) in enumerate(zip(obj_list, pose_list)):
                 sampled_points, sampled_normals, seal_scores = seal_labels[obj_idx]
                 wrench_scores = wrench_dump[i]
+                target_points = transform_points(sampled_points, obj_pose)
+                target_points = transform_points(target_points, np.linalg.inv(camera_pose))
+                # plyfile = os.path.join(dataset_root, 'models', '%03d'%obj_idx, 'nontextured.ply')
+                # model = o3d.io.read_point_cloud(plyfile)
+                # points = np.array(model.points)
+                # points = transform_points(points, obj_pose)
+                # points = transform_points(points, np.linalg.inv(camera_pose))
 
-                target_points = transform_points(sampled_points, trans)
+                # obj_vis = o3d.geometry.PointCloud()
+                # obj_vis.points = o3d.utility.Vector3dVector(target_points.reshape((-1, 3)))
+                # obj_vis.paint_uniform_color([0, 0, 1])
+                # obj_pose_vis.append(obj_vis)
                 grasp_points.append(target_points)
                 grasp_points_seal.append(seal_scores.reshape(-1, 1))
                 grasp_points_wrench.append(wrench_scores.reshape(-1, 1))
                 # grasp_points_graspness.append(graspness.reshape(num_points, 1))
 
+            # o3d.visualization.draw_geometries([origin_frame, scene]+obj_pose_vis)
+
             grasp_points = np.vstack(grasp_points)
             grasp_points_seal = np.vstack(grasp_points_seal)
             grasp_points_wrench = np.vstack(grasp_points_wrench)
 
-            # grasp_points_graspness = np.vstack(grasp_points_graspness)
-            #
             grasp_points = torch.from_numpy(grasp_points).to(device)
             grasp_points_seal = torch.from_numpy(grasp_points_seal).to(device)
             grasp_points_wrench = torch.from_numpy(grasp_points_wrench).to(device)
@@ -234,7 +243,6 @@ if __name__ == '__main__':
 
             # cmap = plt.get_cmap('viridis')
             # cmap_rgb = cmap(cloud_masked_seal_scores[:, 0])[:, :3]
-            #
             # scene.colors = o3d.utility.Vector3dVector(cmap_rgb)
             # o3d.visualization.draw_geometries([origin_frame, scene])
 
