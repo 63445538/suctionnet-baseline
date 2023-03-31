@@ -147,3 +147,29 @@ def get_workspace_mask(cloud, seg, trans=None, organized=True, outlier=0):
         workspace_mask = workspace_mask.reshape([h, w])
 
     return workspace_mask
+
+
+def viewpoint_to_matrix(towards):
+    axis_x = towards
+    axis_y = np.array([-axis_x[1], axis_x[0], 0])
+    axis_x = axis_x / np.linalg.norm(axis_x)
+    axis_y = axis_y / np.linalg.norm(axis_y)
+    axis_z = np.cross(axis_x, axis_y)
+    R2 = np.c_[axis_x, np.c_[axis_y, axis_z]]
+    matrix = R2
+    return matrix
+
+
+def batch_viewpoint_to_matrix(batch_towards):
+    axis_x = batch_towards
+    zeros = np.zeros(axis_x.shape[0], dtype=axis_x.dtype)
+    axis_y = np.stack([-axis_x[:,1], axis_x[:,0], zeros], axis=-1)
+    mask_y = (np.linalg.norm(axis_y, axis=-1) == 0)
+    axis_y[mask_y] = np.array([0, 1, 0])
+    axis_x = axis_x / np.linalg.norm(axis_x, axis=-1, keepdims=True)
+    axis_y = axis_y / np.linalg.norm(axis_y, axis=-1, keepdims=True)
+    axis_z = np.cross(axis_x, axis_y)
+    
+    R = np.stack([axis_x, axis_y, axis_z], axis=-1)
+    # matrix = np.matmul(R2, R1)
+    return R.astype(np.float32)

@@ -2,6 +2,9 @@
     Author: Rui CAO
 """
 
+import MinkowskiEngine as ME
+from .data_utils import CameraInfo, transform_point_cloud, create_point_cloud_from_depth_image, \
+    get_workspace_mask, remove_invisible_grasp_points, batch_viewpoint_to_matrix
 import os
 import sys
 import numpy as np
@@ -16,8 +19,35 @@ from tqdm import tqdm
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
-from .data_utils import CameraInfo, transform_point_cloud, create_point_cloud_from_depth_image, \
-    get_workspace_mask, remove_invisible_grasp_points
+
+
+k = 15.6
+g = 9.8
+radius = 0.01
+wrench_thre = k * radius * np.pi
+
+
+def batch_get_wrench_score(suction_points, directions, center, g_direction):
+    gravity = g_direction * g
+
+    suction_axis = batch_viewpoint_to_matrix(directions)
+    bs = suction_axis.shape[0]
+
+    suction2center = (center[np.newaxis, :] - suction_points)[:, np.newaxis, :]
+    coord = np.matmul(suction2center, suction_axis)
+
+    gravity_proj = np.matmul(
+        np.tile(gravity[np.newaxis, :], (bs, 1, 1)), suction_axis)
+
+    torque_y = gravity_proj[:, 0, 0] * coord[:, 0, 2] - \
+        gravity_proj[:, 0, 2] * coord[:, 0, 0]
+    torque_z = -gravity_proj[:, 0, 0] * coord[:, 0,
+                                              1] + gravity_proj[:, 0, 1] * coord[:, 0, 0]
+
+    torque_max = np.maximum(np.abs(torque_z), np.abs(torque_y))
+    score = 1 - np.minimum(torque_max / wrench_thre, 1)
+
+    return score
 
 
 class SuctionDataset(Dataset):
@@ -35,15 +65,13 @@ class SuctionDataset(Dataset):
         self.collision_labels = {}
         self.voxel_size = 0.002
         self.minimum_num_pt = 50
+        self.eps = 1e-12
 
+        self.bins = np.array([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
         if split == 'train':
             self.sceneIds = list(range(100))
         elif split == 'test':
             self.sceneIds = list(range(100, 190))
-        # if split == 'train':
-        #     self.sceneIds = list(range(1))
-        # elif split == 'test':
-        #     self.sceneIds = list(range(100,101))
         elif split == 'test_seen':
             self.sceneIds = list(range(100, 130))
         elif split == 'test_similar':
@@ -59,14 +87,20 @@ class SuctionDataset(Dataset):
         self.scenename = []
         self.frameid = []
         self.suctionnesspath = []
+        self.normalpath = []
         for x in tqdm(self.sceneIds, desc='Loading data path and collision labels...'):
             for img_num in range(256):
-                self.colorpath.append(os.path.join(root, 'scenes', x, camera, 'rgb', str(img_num).zfill(4) + '.png'))
-                self.depthpath.append(os.path.join(root, 'scenes', x, camera, 'depth', str(img_num).zfill(4) + '.png'))
-                self.labelpath.append(os.path.join(root, 'scenes', x, camera, 'label', str(img_num).zfill(4) + '.png'))
-                self.metapath.append(os.path.join(root, 'scenes', x, camera, 'meta', str(img_num).zfill(4) + '.mat'))
+                self.colorpath.append(os.path.join(
+                    root, 'scenes', x, camera, 'rgb', str(img_num).zfill(4) + '.png'))
+                self.depthpath.append(os.path.join(
+                    root, 'scenes', x, camera, 'depth', str(img_num).zfill(4) + '.png'))
+                self.labelpath.append(os.path.join(
+                    root, 'scenes', x, camera, 'label', str(img_num).zfill(4) + '.png'))
+                self.metapath.append(os.path.join(
+                    root, 'scenes', x, camera, 'meta', str(img_num).zfill(4) + '.mat'))
                 self.scenename.append(x.strip())
                 self.frameid.append(img_num)
+                self.normalpath.append(os.path.join(root, 'normals', x, camera, str(img_num).zfill(4) + '.npy'))
                 if self.load_label:
                     self.suctionnesspath.append(
                         os.path.join(root, 'suction', x, camera, str(img_num).zfill(4) + '.npz'))
@@ -103,6 +137,14 @@ class SuctionDataset(Dataset):
 
         return point_clouds, object_poses_list
 
+    def get_wrench_score(self, obj_points, obj_normals, obj_pose, camera_pose):
+        inst_center = obj_pose[:3, 3]
+        g_direction = np.array([[0, 0, -1]], dtype=np.float32)
+        g_direction = transform_point_cloud(g_direction, np.linalg.inv(camera_pose), '4x4')
+        g_direction = g_direction / np.linalg.norm(g_direction)
+        wrench_score = batch_get_wrench_score(obj_points, obj_normals, inst_center, g_direction)
+        return wrench_score
+
     def __getitem__(self, index):
         if self.load_label:
             return self.get_data_label(index)
@@ -110,11 +152,13 @@ class SuctionDataset(Dataset):
             return self.get_data(index)
 
     def get_data(self, index, return_raw_cloud=False):
-        color = np.array(Image.open(self.colorpath[index]), dtype=np.float32) / 255.0
+        color = np.array(Image.open(
+            self.colorpath[index]), dtype=np.float32) / 255.0
         depth = np.array(Image.open(self.depthpath[index]))
         seg = np.array(Image.open(self.labelpath[index]))
         meta = scio.loadmat(self.metapath[index])
         scene = self.scenename[index]
+        normal = np.load(self.normalpath[index])
         try:
             intrinsic = meta['intrinsic_matrix']
             factor_depth = meta['factor_depth']
@@ -125,7 +169,8 @@ class SuctionDataset(Dataset):
                             factor_depth)
 
         # generate cloud
-        cloud = create_point_cloud_from_depth_image(depth, camera, organized=True)
+        cloud = create_point_cloud_from_depth_image(
+            depth, camera, organized=True)
 
         # get valid points
         depth_mask = (depth > 0)
@@ -133,23 +178,26 @@ class SuctionDataset(Dataset):
         if self.remove_outlier:
             camera_poses = np.load(os.path.join(self.root, 'scenes', scene, self.camera, 'camera_poses.npy'))
             align_mat = np.load(os.path.join(self.root, 'scenes', scene, self.camera, 'cam0_wrt_table.npy'))
-            trans = np.dot(align_mat, camera_poses[self.frameid[index]])
-            workspace_mask = get_workspace_mask(cloud, seg, trans=trans, organized=True, outlier=0.02)
+            camera_pose = np.dot(align_mat, camera_poses[self.frameid[index]])
+            workspace_mask = get_workspace_mask(cloud, seg, trans=camera_pose, organized=True, outlier=0.02)
             mask = (depth_mask & workspace_mask)
         else:
             mask = depth_mask
         cloud_masked = cloud[mask]
         color_masked = color[mask]
         seg_masked = seg[mask]
+        
         if return_raw_cloud:
             return cloud_masked, color_masked
 
         # sample points
         if len(cloud_masked) >= self.num_points:
-            idxs = np.random.choice(len(cloud_masked), self.num_points, replace=False)
+            idxs = np.random.choice(
+                len(cloud_masked), self.num_points, replace=False)
         else:
             idxs1 = np.arange(len(cloud_masked))
-            idxs2 = np.random.choice(len(cloud_masked), self.num_points - len(cloud_masked), replace=True)
+            idxs2 = np.random.choice(
+                len(cloud_masked), self.num_points - len(cloud_masked), replace=True)
             idxs = np.concatenate([idxs1, idxs2], axis=0)
         cloud_sampled = cloud_masked[idxs]
         color_sampled = color_masked[idxs]
@@ -167,13 +215,17 @@ class SuctionDataset(Dataset):
         seg = np.array(Image.open(self.labelpath[index]))
         meta = scio.loadmat(self.metapath[index])
         scene = self.scenename[index]
-        suctionness = np.load(self.suctionnesspath[index])  # for each point in workspace masked point cloud
+        normal = np.load(self.normalpath[index])
+        
+        # for each point in workspace masked point cloud
+        
+        suctionness = np.load(self.suctionnesspath[index])
         seal_score = suctionness['seal_score']
-        wrench_score = suctionness['wrench_score']
+        # wrench_score = suctionness['wrench_score']
 
         try:
             obj_idxs = meta['cls_indexes'].flatten().astype(np.int32)
-            # poses = meta['poses']
+            poses = meta['poses']
             intrinsic = meta['intrinsic_matrix']
             factor_depth = meta['factor_depth']
         except Exception as e:
@@ -187,24 +239,25 @@ class SuctionDataset(Dataset):
 
         # get valid points
         depth_mask = (depth > 0)
-        # seg_mask = (seg > 0)
         if self.remove_outlier:
-            camera_poses = np.load(os.path.join(self.root, 'scenes', scene, self.camera, 'camera_poses.npy'))
-            align_mat = np.load(os.path.join(self.root, 'scenes', scene, self.camera, 'cam0_wrt_table.npy'))
-            trans = np.dot(align_mat, camera_poses[self.frameid[index]])
-            workspace_mask = get_workspace_mask(cloud, seg, trans=trans, organized=True, outlier=0.02)
+            camera_poses = np.load(os.path.join(
+                self.root, 'scenes', scene, self.camera, 'camera_poses.npy'))
+            align_mat = np.load(os.path.join(
+                self.root, 'scenes', scene, self.camera, 'cam0_wrt_table.npy'))
+            camera_pose = np.dot(align_mat, camera_poses[self.frameid[index]])
+            workspace_mask = get_workspace_mask(
+                cloud, seg, trans=camera_pose, organized=True, outlier=0.02)
             mask = (depth_mask & workspace_mask)
         else:
             mask = depth_mask
         cloud_masked = cloud[mask]
         color_masked = color[mask]
+        normal_masked = normal
         seg_masked = seg[mask]
 
         while 1:
-            choose_inst_idx = np.random.choice(obj_idxs)
-            inst_mask = seg_masked == choose_inst_idx
-            # mask_depth = ma.getmaskarray(ma.masked_not_equal(depth, 0))
-            # mask_label = ma.getmaskarray(ma.masked_equal(label, obj[idx]))
+            choose_idx = np.random.choice(np.arange(len(obj_idxs)))
+            inst_mask = seg_masked == obj_idxs[choose_idx]
             inst_mask_len = inst_mask.sum()
             if inst_mask_len > self.minimum_num_pt:
                 break
@@ -219,27 +272,42 @@ class SuctionDataset(Dataset):
         # inst_mask = inst_mask[idxs]
         inst_cloud = cloud_masked[inst_mask][idxs]
         inst_color = color_masked[inst_mask][idxs]
-
+        inst_normals = normal_masked[inst_mask][idxs]
         inst_seal_score = seal_score[inst_mask][idxs]
-        inst_wrench_score = wrench_score[inst_mask][idxs]
+        # inst_wrench_score = wrench_score[inst_mask][idxs]
 
-        # if self.augment:
-        #     cloud_sampled, object_poses_list = self.augment_data(cloud_sampled, object_poses_list)
+        inst_seal_score = inst_seal_score[:, 0]
+        # inst_wrench_score = inst_wrench_score[:, 0]
 
+        obj_pose = np.transpose(poses, (2, 0, 1))[choose_idx]
+        if self.augment:
+            inst_cloud, obj_pose_list = self.augment_data(inst_cloud, [obj_pose])
+        else:
+            obj_pose_list = [obj_pose]
+        inst_wrench_score = self.get_wrench_score(inst_cloud, inst_normals, obj_pose_list[0], camera_pose)
+
+        inst_seal_score_ids = np.digitize(inst_seal_score, self.bins)
+        inst_wrench_score_ids = np.digitize(inst_wrench_score, self.bins)
+
+        inst_seal_score_ids = np.clip(inst_seal_score_ids, 0, len(self.bins)-1) - 1
+        inst_wrench_score_ids = np.clip(inst_wrench_score_ids, 0, len(self.bins)-1) - 1
+        
         ret_dict = {}
         ret_dict['point_clouds'] = inst_cloud.astype(np.float32)
         ret_dict['cloud_colors'] = inst_color.astype(np.float32)
         ret_dict['coors'] = inst_cloud.astype(np.float32) / self.voxel_size
         ret_dict['feats'] = inst_color.astype(np.float32)
 
-        ret_dict['seal_score_label'] = inst_seal_score[:, 0].astype(np.float32)
-        ret_dict['wrench_score_label'] = inst_wrench_score[:, 0].astype(np.float32)
+        ret_dict['seal_score_label'] = inst_seal_score.astype(np.float32)
+        ret_dict['wrench_score_label'] = inst_wrench_score.astype(np.float32)
+        ret_dict['seal_score_idx_label'] = inst_seal_score_ids.astype(np.int)
+        ret_dict['wrench_score_idx_label'] = inst_seal_score_ids.astype(np.int)
         return ret_dict
 
 
 def load_obj_list():
-    # obj_names = list(range(88))
-    obj_names = list([15, 1, 6, 16, 21, 49, 67, 71, 47])
+    obj_names = list(range(88))
+    # obj_names = list([15, 1, 6, 16, 21, 49, 67, 71, 47])
     valid_obj_idxs = []
     for obj_idx in tqdm(obj_names, desc='Loading grasping labels...'):
         # if i == 18: continue
@@ -268,7 +336,6 @@ def collate_fn(batch):
     raise TypeError("batch must contain tensors, dicts or lists; found {}".format(type(batch[0])))
 
 
-import MinkowskiEngine as ME
 def minkowski_collate_fn(list_data):
     coordinates_batch, features_batch = ME.utils.sparse_collate([d["coors"] for d in list_data],
                                                                 [d["feats"] for d in list_data], dtype=torch.float32)

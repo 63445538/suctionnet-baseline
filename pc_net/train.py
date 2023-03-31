@@ -48,11 +48,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset_root', default='/data/rcao/dataset/graspnet', help='Dataset root')
 parser.add_argument('--camera', default='realsense', help='Camera split [realsense/kinect]')
 parser.add_argument('--checkpoint_path', default=None, help='Model checkpoint path [default: None]')
-parser.add_argument('--log_dir', default='log/snet_v0.1', help='Dump dir to save model checkpoint [default: log]')
+parser.add_argument('--log_dir', default='log/snet_v0.2.5', help='Dump dir to save model checkpoint [default: log]')
 parser.add_argument('--seed_feat_dim', default=512, type=int, help='Point wise feature dim')
 # parser.add_argument('--num_view', type=int, default=300, help='View Number [default: 300]')
-parser.add_argument('--max_epoch', type=int, default=100, help='Epoch to run [default: 18]')
-parser.add_argument('--batch_size', type=int, default=32, help='Batch Size during training [default: 2]')
+parser.add_argument('--max_epoch', type=int, default=60, help='Epoch to run [default: 18]')
+parser.add_argument('--batch_size', type=int, default=64, help='Batch Size during training [default: 2]')
 parser.add_argument('--learning_rate', type=float, default=0.001, help='Initial learning rate [default: 0.001]')
 parser.add_argument('--weight_decay', type=float, default=0, help='Optimization L2 weight decay [default: 0]')
 # parser.add_argument('--bn_decay_step', type=int, default=2, help='Period of BN decay (in epochs) [default: 2]')
@@ -67,6 +67,7 @@ EPOCH_CNT = 0
 # LR_DECAY_STEPS = [int(x) for x in cfgs.lr_decay_steps.split(',')]
 # LR_DECAY_RATES = [float(x) for x in cfgs.lr_decay_rates.split(',')]
 # assert (len(LR_DECAY_STEPS) == len(LR_DECAY_RATES))
+cfgs.log_dir = os.path.join(cfgs.log_dir, cfgs.camera)
 DEFAULT_CHECKPOINT_PATH = os.path.join(cfgs.log_dir, 'checkpoint.tar')
 CHECKPOINT_PATH = cfgs.checkpoint_path if cfgs.checkpoint_path is not None \
     else DEFAULT_CHECKPOINT_PATH
@@ -96,7 +97,7 @@ torch.cuda.set_device(device)
 # Create Dataset and Dataloader
 valid_obj_idxs = load_obj_list()
 TRAIN_DATASET = SuctionDataset(cfgs.dataset_root, valid_obj_idxs, camera=cfgs.camera, split='train', num_points=2048, 
-                               remove_outlier=True, augment=False)
+                               remove_outlier=True, augment=True)
 TEST_DATASET = SuctionDataset(cfgs.dataset_root, valid_obj_idxs, camera=cfgs.camera, split='test_seen', num_points=2048, 
                               remove_outlier=True, augment=False)
 
@@ -106,9 +107,9 @@ print(len(TRAIN_DATASET), len(TEST_DATASET))
 # TEST_DATALOADER = DataLoader(TEST_DATASET, batch_size=cfgs.batch_size, shuffle=False,
 #     num_workers=4, worker_init_fn=my_worker_init_fn, collate_fn=collate_fn)
 TRAIN_DATALOADER = DataLoader(TRAIN_DATASET, batch_size=cfgs.batch_size, shuffle=True,
-                              num_workers=8, worker_init_fn=my_worker_init_fn, collate_fn=minkowski_collate_fn)
+                              num_workers=0, worker_init_fn=my_worker_init_fn, collate_fn=minkowski_collate_fn)
 TEST_DATALOADER = DataLoader(TEST_DATASET, batch_size=cfgs.batch_size, shuffle=False,
-                             num_workers=8, worker_init_fn=my_worker_init_fn, collate_fn=minkowski_collate_fn)
+                             num_workers=0, worker_init_fn=my_worker_init_fn, collate_fn=minkowski_collate_fn)
 print(len(TRAIN_DATALOADER), len(TEST_DATALOADER))
 # Init the model and optimzier
 # net = GraspNet(input_feature_dim=0, num_view=cfgs.num_view, num_angle=12, num_depth=4,
@@ -119,7 +120,7 @@ net.to(device)
 
 # Load the Adam optimizer
 optimizer = optim.Adam(net.parameters(), lr=cfgs.learning_rate, weight_decay=cfgs.weight_decay)
-lr_scheduler = CosineAnnealingLR(optimizer, T_max=32, eta_min=0.0)
+lr_scheduler = CosineAnnealingLR(optimizer, T_max=16, eta_min=0.0)
 
 # Load checkpoint if there is any
 it = -1  # for the initialize value of `LambdaLR` and `BNMomentumScheduler`
@@ -264,7 +265,7 @@ def train(start_epoch):
         except:
             save_dict['model_state_dict'] = net.state_dict()
         torch.save(save_dict, os.path.join(cfgs.log_dir, 'checkpoint.tar'))
-        if not EPOCH_CNT % 3:
+        if not EPOCH_CNT % 5:
             torch.save(save_dict, os.path.join(cfgs.log_dir, 'checkpoint_{}.tar'.format(EPOCH_CNT)))
 
 

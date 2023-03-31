@@ -17,13 +17,13 @@ import open3d as o3d
 # import matplotlib.pyplot as plt
 # from tqdm import tqdm
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.cuda.set_device(device)
 partial_num = 100000
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset_root', default='/media/rcao/Data/Dataset/graspnet')
-parser.add_argument('--camera_type', default='realsense', help='Camera split [realsense/kinect]')
+parser.add_argument('--dataset_root', default='/data/rcao/dataset/graspnet')
+parser.add_argument('--camera_type', default='kinect', help='Camera split [realsense/kinect]')
 
 
 def _isArrayLike(obj):
@@ -124,7 +124,7 @@ if __name__ == '__main__':
     save_path_root = os.path.join(dataset_root, 'suction')
 
     origin_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05)
-    for scene_id in range(130):
+    for scene_id in range(160):
         for ann_id in range(256):
             # get scene point cloud
             print('generating scene: {} ann: {}'.format(scene_id, ann_id))

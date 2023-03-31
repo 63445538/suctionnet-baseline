@@ -3,3 +3,4 @@ __pycache__
 *.pyc
 /normal_std/save/
 pc_net/log
+pc_net/save
