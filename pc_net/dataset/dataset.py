@@ -41,8 +41,7 @@ def batch_get_wrench_score(suction_points, directions, center, g_direction):
 
     torque_y = gravity_proj[:, 0, 0] * coord[:, 0, 2] - \
         gravity_proj[:, 0, 2] * coord[:, 0, 0]
-    torque_z = -gravity_proj[:, 0, 0] * coord[:, 0,
-                                              1] + gravity_proj[:, 0, 1] * coord[:, 0, 0]
+    torque_z = -gravity_proj[:, 0, 0] * coord[:, 0, 1] + gravity_proj[:, 0, 1] * coord[:, 0, 0]
 
     torque_max = np.maximum(np.abs(torque_z), np.abs(torque_y))
     score = 1 - np.minimum(torque_max / wrench_thre, 1)
@@ -206,7 +205,7 @@ class SuctionDataset(Dataset):
         ret_dict['point_clouds'] = cloud_sampled.astype(np.float32)
         ret_dict['cloud_colors'] = color_sampled.astype(np.float32)
         ret_dict['coors'] = cloud_sampled.astype(np.float32) / self.voxel_size
-        ret_dict['feats'] = np.ones_like(cloud_sampled).astype(np.float32)
+        ret_dict['feats'] = color_sampled.astype(np.float32)
         return ret_dict
 
     def get_data_label(self, index):
@@ -339,12 +338,12 @@ def collate_fn(batch):
 def minkowski_collate_fn(list_data):
     coordinates_batch, features_batch = ME.utils.sparse_collate([d["coors"] for d in list_data],
                                                                 [d["feats"] for d in list_data], dtype=torch.float32)
-    coordinates_batch, features_batch, _, quantize2original = ME.utils.sparse_quantize(
-        coordinates_batch, features_batch, return_index=True, return_inverse=True)
+    # coordinates_batch, features_batch, _, quantize2original = ME.utils.sparse_quantize(
+    #     coordinates_batch, features_batch, return_index=True, return_inverse=True)
     res = {
         "coors": coordinates_batch,
         "feats": features_batch,
-        "quantize2original": quantize2original
+        # "quantize2original": quantize2original
     }
 
     def collate_fn_(batch):

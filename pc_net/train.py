@@ -1,7 +1,6 @@
 """ Training routine for GraspNet baseline model. """
 
 import os
-import sys
 import numpy as np
 from datetime import datetime
 import argparse
@@ -12,6 +11,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import ExponentialLR, MultiStepLR, CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
+import MinkowskiEngine as ME
 
 import resource
 
@@ -26,6 +26,21 @@ import cv2
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
 
+import sys
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.join(ROOT_DIR))
+
+
+import random
+def setup_seed(seed):
+     torch.manual_seed(seed)
+     torch.cuda.manual_seed_all(seed)
+     np.random.seed(seed)
+     random.seed(seed)
+     torch.backends.cudnn.deterministic = True
+# 设置随机数种子
+setup_seed(0)
+
 # ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 # sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 # sys.path.append(os.path.join(ROOT_DIR, 'pointnet2'))
@@ -38,7 +53,7 @@ cv2.ocl.setUseOpenCL(False)
 # from pytorch_utils import BNMomentumScheduler
 
 from dataset.dataset import SuctionDataset, collate_fn, minkowski_collate_fn, load_obj_list
-from SNet import SuctionNet
+# from SNet import SuctionNet
 from SNet_loss import get_loss
 
 # from label_generation import process_grasp_labels
@@ -48,7 +63,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset_root', default='/data/rcao/dataset/graspnet', help='Dataset root')
 parser.add_argument('--camera', default='realsense', help='Camera split [realsense/kinect]')
 parser.add_argument('--checkpoint_path', default=None, help='Model checkpoint path [default: None]')
-parser.add_argument('--log_dir', default='log/snet_v0.2.5', help='Dump dir to save model checkpoint [default: log]')
+parser.add_argument('--log_dir', default='log/snet_v0.2.7', help='Dump dir to save model checkpoint [default: log]')
 parser.add_argument('--seed_feat_dim', default=512, type=int, help='Point wise feature dim')
 # parser.add_argument('--num_view', type=int, default=300, help='View Number [default: 300]')
 parser.add_argument('--max_epoch', type=int, default=60, help='Epoch to run [default: 18]')
@@ -91,7 +106,7 @@ def my_worker_init_fn(worker_id):
     pass
 
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.cuda.set_device(device)
 
 # Create Dataset and Dataloader
@@ -115,7 +130,17 @@ print(len(TRAIN_DATALOADER), len(TEST_DATALOADER))
 # net = GraspNet(input_feature_dim=0, num_view=cfgs.num_view, num_angle=12, num_depth=4,
 #                         cylinder_radius=0.05, hmin=-0.02, hmax_list=[0.01,0.02,0.03,0.04])
 
-net = SuctionNet(feature_dim=512)
+# net = SuctionNet(feature_dim=512)
+# net.to(device)
+
+# v0.2.6
+# from models.resunet import Res16UNet34CProbMG
+# net = Res16UNet34CProbMG(in_channels=3, out_channels=1, max_t=-1, logit_norm=False)
+# net.to(device)
+
+# v0.2.7
+from models.resunet import Res16UNet34CAleatoric
+net = Res16UNet34CAleatoric(in_channels=3, out_channels=1)
 net.to(device)
 
 # Load the Adam optimizer
@@ -175,9 +200,26 @@ def train_one_epoch():
             else:
                 batch_data_label[key] = batch_data_label[key].to(device)
 
-        # Forward pass
-        end_points = net(batch_data_label)
+        # # Forward pass
+        # end_points = net(batch_data_label)
 
+        # v0.2.6
+        in_data = ME.TensorField(features=batch_data_label['feats'], coordinates=batch_data_label['coors'],
+                                quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE)
+
+        end_points = batch_data_label
+        
+        # v0.2.6
+        # score, emb_mu, emb_sigma = net(in_data)
+        # end_points['score_pred'] = score
+        # end_points['emb_mu_dense'] = emb_mu.slice(in_data)
+        # end_points['emb_sigma_dense'] = emb_sigma.slice(in_data)
+        
+        # v0.2.7
+        score, sigma = net(in_data)
+        end_points['score_pred'] = score
+        end_points['sigma_pred'] = sigma
+        
         # Compute loss and gradients, update parameters.
         loss, end_points = get_loss(end_points)
         loss.backward()
@@ -217,9 +259,20 @@ def evaluate_one_epoch():
                 batch_data_label[key] = batch_data_label[key].to(device)
 
         # Forward pass
-        with torch.no_grad():
-            end_points = net(batch_data_label)
+        # with torch.no_grad():
+        #     end_points = net(batch_data_label)
 
+        # Forward pass v0.2.6
+        with torch.no_grad():
+            in_data = ME.TensorField(features=batch_data_label['feats'], coordinates=batch_data_label['coors'],
+                                    quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE)
+
+            end_points = batch_data_label
+            score, emb_mu, emb_sigma = net(in_data)
+            end_points['score_pred'] = score
+            end_points['emb_mu_dense'] = emb_mu.slice(in_data)
+            end_points['emb_sigma_dense'] = emb_sigma.slice(in_data)
+            
         # Compute loss
         loss, end_points = get_loss(end_points)
 

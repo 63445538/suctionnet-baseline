@@ -30,7 +30,6 @@ def setup_seed(seed):
 # 设置随机数种子
 setup_seed(0)
 
-
 minimum_num_pt = 50
 num_pt = 1024
 width = 1280
