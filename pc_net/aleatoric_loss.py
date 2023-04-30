@@ -6,29 +6,37 @@ import torch.nn.functional as F
 
 class AleatoricLoss(nn.Module):
 
-    def __init__(self, is_log_sigma, nb_samples=10):
+    def __init__(self, is_log_sigma, res_loss='l2', nb_samples=10):
         super().__init__()
         self.is_log_sigma = is_log_sigma
         self.nb_samples = nb_samples
         self.ignore_index=255
+        self.res_loss = res_loss
 
     def forward(self, logits, sigma, target):
-        if self.is_log_sigma:
-            distribution = d.Normal(logits, torch.exp(sigma))
-        else:
-            distribution = d.Normal(logits, sigma + 1e-7)
+        # if self.is_log_sigma:
+        #     distribution = d.Normal(logits, torch.exp(sigma))
+        # else:
+        #     distribution = d.Normal(logits, sigma + 1e-7)
 
+        # # x_hat = distribution.rsample((self.nb_samples,))
+
+        # # mc_expectation = F.softmax(x_hat, dim=2).mean(dim=0)
+        # # log_probs = (mc_expectation + 1e-7).log()
+        # # loss = F.nll_loss(log_probs, target, ignore_index=self.ignore_index)
         # x_hat = distribution.rsample((self.nb_samples,))
 
-        # mc_expectation = F.softmax(x_hat, dim=2).mean(dim=0)
-        # log_probs = (mc_expectation + 1e-7).log()
-        # loss = F.nll_loss(log_probs, target, ignore_index=self.ignore_index)
-        x_hat = distribution.rsample((self.nb_samples,))
-
-        mc_expectation = x_hat.squeeze(-1).mean(dim=0)
-        log_probs = mc_expectation + 1e-7
-        loss = F.smooth_l1_loss(log_probs, target)
-
+        # mc_expectation = x_hat.squeeze(-1).mean(dim=0)
+        # log_probs = mc_expectation + 1e-7
+        # loss = F.smooth_l1_loss(log_probs, target)
+        if self.res_loss == 'l2':
+            loss1 = torch.mul(torch.exp(-sigma), F.mse_loss(logits, target, reduction='none'))
+        elif self.res_loss == 'l1':
+            loss1 = torch.mul(torch.exp(-sigma), F.l1_loss(logits, target, reduction='none'))
+        else:
+            raise Exception("Invalid residual loss")
+        loss2 = sigma
+        loss = (0.5 * (loss1 + loss2)).mean()
         return loss
 
 
