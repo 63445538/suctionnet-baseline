@@ -6,6 +6,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 import scipy.io as scio
+import time
+import pickle
 
 import sys
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -39,33 +41,66 @@ height = 720
 voxel_size = 0.002
 suction_height = 0.1
 suction_radius = 0.01
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--split', default='test_novel', help='dataset split [default: test_seen]')
-parser.add_argument('--camera', default='kinect', help='camera to use [default: kinect]')
+parser.add_argument('--camera', default='realsense', help='camera to use [default: kinect]')
+parser.add_argument('--sample_time', default='4', help='sample times for uncertainty estimation')
 parser.add_argument('--save_root', default='save', help='where to save')
 parser.add_argument('--dataset_root', default='/data/rcao/dataset/graspnet', help='where dataset is')
+parser.add_argument('--checkpoint_root', default='/data/rcao/result/snet/', help='where dataset is')
 FLAGS = parser.parse_args()
+print(FLAGS)
 
-network_ver = 'v0.2.4'
-trained_epoch = 40
-save_ver = '{}_{}'.format(network_ver, trained_epoch)
-
+network_ver = 'v0.2.7.4'
+trained_epoch = 60
+sample_time = int(FLAGS.sample_time)
+save_ver = '{}_{}_{}'.format(network_ver+'.p', trained_epoch, sample_time)
 
 split = FLAGS.split
 camera = FLAGS.camera
 dataset_root = FLAGS.dataset_root
+checkpoint_root = FLAGS.checkpoint_root
 save_root = os.path.join(FLAGS.save_root, save_ver)
 torch.cuda.set_device(device)
 
-net = SuctionNet(feature_dim=512, is_training=False)
+# net = SuctionNet(feature_dim=512, is_training=False)
+# net.to(device)
+# net.eval()
+# checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint_{}.tar'.format(trained_epoch)), map_location=device)
+# # checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint.tar'), map_location=device)
+# net.load_state_dict(checkpoint['model_state_dict'])
+
+# v0.2.7
+# from models.resunet import Res16UNet34CAleatoric
+# net = Res16UNet34CAleatoric(in_channels=3, out_channels=1)
+# net.to(device)
+# # checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint.tar'), map_location=device)
+# checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint_{}.tar'.format(trained_epoch)), map_location=device)
+# net.load_state_dict(checkpoint['model_state_dict'])
+# net.eval()
+
+from SNet import SuctionNet_prob
+net = SuctionNet_prob(feature_dim=512)
 net.to(device)
-net.eval()
-checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint_{}.tar'.format(trained_epoch)), map_location=device)
-# checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint.tar'), map_location=device)
+checkpoint = torch.load(os.path.join(checkpoint_root, 'log', 'snet_'+network_ver, camera, 
+                                     'checkpoint_{}.tar'.format(trained_epoch)), map_location=device)
 net.load_state_dict(checkpoint['model_state_dict'])
-# bins = torch.tensor([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], device=device)
+net.eval()
+
+dropout_prob = 0.1
+# v0.2.7.1 0.5 v0.2.7.3 0.1
+import torch.nn.functional as F
+def dropout_hook_wrapper(module, sinput, soutput):
+    input = soutput.F
+    output = F.dropout(input, p=dropout_prob, training=True)
+    soutput_new = ME.SparseTensor(output, coordinate_map_key=soutput.coordinate_map_key, coordinate_manager=soutput.coordinate_manager)
+    return soutput_new
+for module in net.modules():
+    if isinstance(module, ME.MinkowskiConvolution):
+        module.register_forward_hook(dropout_hook_wrapper)
+
 
 eps = 1e-12
 def normalize(array):
@@ -83,6 +118,7 @@ def normalize_tensor(tensor):
 
 
 def inference(scene_idx):
+    infer_time_list = []
     for anno_idx in range(256):
 
         rgb_path = os.path.join(dataset_root, 'scenes/scene_{:04d}/{}/rgb/{:04d}.png'.format(scene_idx, camera, anno_idx))
@@ -168,9 +204,9 @@ def inference(scene_idx):
             # inst_seal_score_list.append(seal_score_gt[inst_mask][idxs].astype(np.float32))
             # inst_wrench_score_list.append(wrench_score_gt[inst_mask][idxs].astype(np.float32))
 
-        inst_cloud_tensor = torch.tensor(inst_cloud_list, dtype=torch.float32, device=device)
-        inst_colors_tensor = torch.tensor(inst_color_list, dtype=torch.float32, device=device)
-        inst_normals_tensor = torch.tensor(inst_normals_list, dtype=torch.float32, device=device)
+        inst_cloud_tensor = torch.tensor(np.array(inst_cloud_list), dtype=torch.float32, device=device)
+        inst_colors_tensor = torch.tensor(np.array(inst_color_list), dtype=torch.float32, device=device)
+        inst_normals_tensor = torch.tensor(np.array(inst_normals_list), dtype=torch.float32, device=device)
 
         coordinates_batch, features_batch = ME.utils.sparse_collate(inst_coors_list, inst_feats_list,
                                                                     dtype=torch.float32)
@@ -181,16 +217,19 @@ def inference(scene_idx):
                             "cloud_colors": inst_colors_tensor,
                             "coors": coordinates_batch.to(device),
                             "feats": features_batch.to(device),
-                            "quantize2original": quantize2original.to(device)}
+                            "quantize2original": quantize2original.to(device)
+                            }
 
-        end_points = net(batch_data_label)
+        # Forward pass
+        # with torch.no_grad():
+        #     end_points = net(batch_data_label)
 
-        seal_score_pred = end_points['seal_score_pred']
-        wrench_score_pred = end_points['wrench_score_pred']
+        # seal_score_pred = end_points['seal_score_pred']
+        # wrench_score_pred = end_points['wrench_score_pred']
         
-        # seal_score_pred = normalize_tensor(seal_score_pred)
-        # wrench_score_pred = normalize_tensor(wrench_score_pred)
-        suction_score = seal_score_pred * wrench_score_pred
+        # # seal_score_pred = normalize_tensor(seal_score_pred)
+        # # wrench_score_pred = normalize_tensor(wrench_score_pred)
+        # suction_score = seal_score_pred * wrench_score_pred
         
         # seal_score_logits = end_points['seal_score_pred']
         # wrench_score_logits = end_points['wrench_score_pred']
@@ -200,19 +239,69 @@ def inference(scene_idx):
         # seal_score = bins[seal_score_pred + 1]
         # wrench_score = bins[wrench_score_pred + 1]
         # suction_score = seal_score * wrench_score
-    
-        # suction_score = seal_score_pred
-        top_suction_scores, top_suction_indices = torch.topk(suction_score, k=200, dim=1)
+        
+        # Forward pass v0.2.7
+        # with torch.no_grad():
+        #     in_data = ME.TensorField(features=batch_data_label['feats'], coordinates=batch_data_label['coors'],
+        #                     quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE)
+        #     end_points = batch_data_label
 
-        Bs, _ = top_suction_scores.size()
-        top_suction_scores = top_suction_scores.detach().cpu().numpy()
+        #     score, sigma = net(in_data)
+        #     end_points['score_pred'] = score
+        #     end_points['sigma_pred'] = sigma
+            
+        #     B, point_num = inst_cloud_tensor.shape[:2]
+        #     score = score.view(B, point_num)
+        #     sigma = sigma.view(B, point_num)
+        
+        # score = end_points['score_pred']
+        # top_suction_scores, top_suction_indices = torch.topk(score, k=200, dim=1)
+        
+        # Bs, _ = top_suction_scores.size()
+        # top_suction_scores = top_suction_scores.detach().cpu().numpy()
+        # top_suction_indices = top_suction_indices.detach().cpu().numpy()
+        torch.cuda.synchronize()
+        start = time.time()
+        with torch.no_grad():
+            Sample_T = sample_time
+            Bs, point_num = inst_cloud_tensor.shape[:2]
+            score_sample = torch.zeros(Sample_T, Bs, point_num)
+            sigma_sample = torch.zeros(Sample_T, Bs, point_num)
+            for i in range(Sample_T):
+                # in_data = ME.TensorField(features=batch_data_label['feats'], coordinates=batch_data_label['coors'],
+                #                 quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE)
+                # end_points = batch_data_label
+                # score, sigma = net(in_data)
+                # end_points['score_pred'] = score
+                # end_points['sigma_pred'] = sigma
+                
+                end_points = net(batch_data_label)
+                score = end_points['score_pred']
+                sigma = end_points['sigma_pred']
+
+                score = score.view(Bs, point_num)
+                sigma = sigma.view(Bs, point_num)
+
+                sigma = torch.exp(sigma)
+                score_sample[i, :, :] = score
+                sigma_sample[i, :, :] = sigma
+
+            # uncertainty = torch.square(score)
+            scores = torch.mean(score_sample, dim=0)
+            uncertainty = torch.mean(torch.square(score_sample), dim=0) - torch.square(torch.mean(score_sample, dim=0)) + torch.mean(sigma_sample, dim=0)
+            uncertainty = uncertainty / uncertainty.max(dim=1, keepdim=True)[0]
+        
+        torch.cuda.synchronize()
+        infer_time = time.time() - start
+        infer_time_list.append(infer_time)
+        
+        _, top_suction_indices = torch.topk(scores * (1 - uncertainty), k=200, dim=1)
+    
+        scores = scores.detach().cpu().numpy()
         top_suction_indices = top_suction_indices.detach().cpu().numpy()
 
         inst_normals = inst_normals_tensor.detach().cpu().numpy()
         inst_cloud = inst_cloud_tensor.detach().cpu().numpy()
-
-        # seal_score_vis = seal_score_pred.detach().cpu().numpy()
-        # wrench_score_vis = wrench_score_pred.detach().cpu().numpy()
 
         suction_scores = []
         suction_directions = []
@@ -221,7 +310,8 @@ def inference(scene_idx):
         # inst_vis_copy_list = []
         for i in range(Bs):
             top_50_suction_idx = top_suction_indices[i]
-            suction_scores.append(top_suction_scores[i])
+            suction_scores.append(scores[i][top_50_suction_idx])
+            # suction_scores.append(top_suction_scores[i])
             suction_directions.append(inst_normals[i][top_50_suction_idx])
             suction_translations.append(inst_cloud[i][top_50_suction_idx])
 
@@ -272,6 +362,9 @@ def inference(scene_idx):
         #
         # o3d.visualization.draw_geometries([downsampled_scene, *suckers], width=1536, height=864)
 
+    result_dict = {'infer_time': np.array(infer_time_list)}
+    with open(os.path.join(save_root, split, 'scene_%04d'%scene_idx, camera, 'infer_time.pkl'), 'wb') as file:
+        pickle.dump(result_dict, file)
 
 scene_list = []
 if split == 'test':
@@ -284,7 +377,7 @@ elif split == 'test_similar':
     for i in range(130, 160):
         scene_list.append(i)
 elif split == 'test_novel':
-    for i in range(169, 190):
+    for i in range(160, 190):
         scene_list.append(i)
 else:
     print('invalid split')

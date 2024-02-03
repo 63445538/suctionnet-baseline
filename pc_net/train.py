@@ -54,19 +54,17 @@ setup_seed(0)
 
 from dataset.dataset import SuctionDataset, collate_fn, minkowski_collate_fn, load_obj_list
 # from SNet import SuctionNet
-from SNet_loss import get_loss
-
 # from label_generation import process_grasp_labels
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset_root', default='/data/rcao/dataset/graspnet', help='Dataset root')
-parser.add_argument('--camera', default='realsense', help='Camera split [realsense/kinect]')
+parser.add_argument('--camera', default='kinect', help='Camera split [realsense/kinect]')
 parser.add_argument('--checkpoint_path', default=None, help='Model checkpoint path [default: None]')
-parser.add_argument('--log_dir', default='log/snet_v0.2.7', help='Dump dir to save model checkpoint [default: log]')
+parser.add_argument('--log_dir', default='log/snet_v0.2.7.5', help='Dump dir to save model checkpoint [default: log]')
 parser.add_argument('--seed_feat_dim', default=512, type=int, help='Point wise feature dim')
 # parser.add_argument('--num_view', type=int, default=300, help='View Number [default: 300]')
-parser.add_argument('--max_epoch', type=int, default=60, help='Epoch to run [default: 18]')
+parser.add_argument('--max_epoch', type=int, default=61, help='Epoch to run [default: 18]')
 parser.add_argument('--batch_size', type=int, default=64, help='Batch Size during training [default: 2]')
 parser.add_argument('--learning_rate', type=float, default=0.001, help='Initial learning rate [default: 0.001]')
 parser.add_argument('--weight_decay', type=float, default=0, help='Optimization L2 weight decay [default: 0]')
@@ -106,7 +104,7 @@ def my_worker_init_fn(worker_id):
     pass
 
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 torch.cuda.set_device(device)
 
 # Create Dataset and Dataloader
@@ -139,9 +137,34 @@ print(len(TRAIN_DATALOADER), len(TEST_DATALOADER))
 # net.to(device)
 
 # v0.2.7
-from models.resunet import Res16UNet34CAleatoric
-net = Res16UNet34CAleatoric(in_channels=3, out_channels=1)
+# from models.resunet import Res16UNet34CAleatoric
+# from SNet_loss import get_loss
+# net = Res16UNet34CAleatoric(in_channels=3, out_channels=1)
+# net.to(device)
+
+# v0.2.7.2
+from SNet import SuctionNet_prob
+from SNet_loss import get_loss
+net = SuctionNet_prob(feature_dim=512)
 net.to(device)
+
+# dropout_prob = 0.1
+# # v0.2.7.1 0.5 v0.2.7.3 0.1
+# import torch.nn.functional as F
+# def dropout_hook_wrapper(module, sinput, soutput):
+#     input = soutput.F
+#     output = F.dropout(input, p=dropout_prob, training=True)
+#     soutput_new = ME.SparseTensor(output, coordinate_map_key=soutput.coordinate_map_key, coordinate_manager=soutput.coordinate_manager)
+#     return soutput_new
+# for module in net.modules():
+#     if isinstance(module, ME.MinkowskiConvolution):
+#         module.register_forward_hook(dropout_hook_wrapper)
+        
+# v0.2.1.1
+# from SNet import SuctionNet
+# from SNet_loss import get_loss
+# net = SuctionNet(feature_dim=512)
+# net.to(device)
 
 # Load the Adam optimizer
 optimizer = optim.Adam(net.parameters(), lr=cfgs.learning_rate, weight_decay=cfgs.weight_decay)
@@ -200,14 +223,14 @@ def train_one_epoch():
             else:
                 batch_data_label[key] = batch_data_label[key].to(device)
 
-        # # Forward pass
-        # end_points = net(batch_data_label)
+        # # Forward pass v0.2.7.2
+        end_points = net(batch_data_label)
 
         # v0.2.6
-        in_data = ME.TensorField(features=batch_data_label['feats'], coordinates=batch_data_label['coors'],
-                                quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE)
+        # in_data = ME.TensorField(features=batch_data_label['feats'], coordinates=batch_data_label['coors'],
+        #                         quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE)
 
-        end_points = batch_data_label
+        # end_points = batch_data_label
         
         # v0.2.6
         # score, emb_mu, emb_sigma = net(in_data)
@@ -216,9 +239,9 @@ def train_one_epoch():
         # end_points['emb_sigma_dense'] = emb_sigma.slice(in_data)
         
         # v0.2.7
-        score, sigma = net(in_data)
-        end_points['score_pred'] = score
-        end_points['sigma_pred'] = sigma
+        # score, sigma = net(in_data)
+        # end_points['score_pred'] = score
+        # end_points['sigma_pred'] = sigma
         
         # Compute loss and gradients, update parameters.
         loss, end_points = get_loss(end_points)
@@ -258,21 +281,26 @@ def evaluate_one_epoch():
             else:
                 batch_data_label[key] = batch_data_label[key].to(device)
 
-        # Forward pass
-        # with torch.no_grad():
-        #     end_points = net(batch_data_label)
-
-        # Forward pass v0.2.6
+        # Forward pass v0.2.7.2
         with torch.no_grad():
-            in_data = ME.TensorField(features=batch_data_label['feats'], coordinates=batch_data_label['coors'],
-                                    quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE)
+            end_points = net(batch_data_label)
 
-            end_points = batch_data_label
-            score, emb_mu, emb_sigma = net(in_data)
-            end_points['score_pred'] = score
-            end_points['emb_mu_dense'] = emb_mu.slice(in_data)
-            end_points['emb_sigma_dense'] = emb_sigma.slice(in_data)
+        # with torch.no_grad():
+        #     in_data = ME.TensorField(features=batch_data_label['feats'], coordinates=batch_data_label['coors'],
+        #                             quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE)
+
+        #     end_points = batch_data_label
             
+            # Forward pass v0.2.6
+            # score, emb_mu, emb_sigma = net(in_data)
+            # end_points['score_pred'] = score
+            # end_points['emb_mu_dense'] = emb_mu.slice(in_data)
+            # end_points['emb_sigma_dense'] = emb_sigma.slice(in_data)
+            
+            # score, sigma = net(in_data)
+            # end_points['score_pred'] = score
+            # end_points['sigma_pred'] = sigma
+        
         # Compute loss
         loss, end_points = get_loss(end_points)
 

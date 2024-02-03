@@ -4,7 +4,7 @@ import MinkowskiEngine as ME
 from metric_loss import MetricLoss
 from aleatoric_loss import AleatoricLoss
 
-aleatoric_criterion = AleatoricLoss(is_log_sigma=False, nb_samples=10)
+aleatoric_criterion = AleatoricLoss(is_log_sigma=False, res_loss='l1', nb_samples=10)
 metric_criterion = MetricLoss(nsample=18, kl_scale_factor=1e-4, epsilon=0.1)
 
 # def get_loss(end_points):
@@ -17,7 +17,6 @@ metric_criterion = MetricLoss(nsample=18, kl_scale_factor=1e-4, epsilon=0.1)
 
 
 # v0.2.6
-# 
 # def get_loss(end_points):
 #     # label_dense = torch.cat((label_dense), 0)
 #     end_points['score_label'] = end_points['seal_score_label'] * end_points['wrench_score_label']
@@ -35,11 +34,25 @@ metric_criterion = MetricLoss(nsample=18, kl_scale_factor=1e-4, epsilon=0.1)
 def get_loss(end_points):
     # label_dense = torch.cat((label_dense), 0)
     end_points['score_label'] = end_points['seal_score_label'] * end_points['wrench_score_label']
-    end_points['score_label'] = end_points['score_label'].view(-1)
+    # end_points['score_label'] = end_points['score_label'].view(-1, 1)
     
     loss = aleatoric_criterion(end_points['score_pred'], end_points['sigma_pred'], end_points['score_label'])
     end_points['loss/overall_loss'] = loss
     return loss, end_points
+
+
+# v0.2.1.1
+# def get_loss(end_points):
+#     # label_dense = torch.cat((label_dense), 0)
+#     end_points['score_label'] = end_points['seal_score_label'] * end_points['wrench_score_label']
+#     # end_points['score_label'] = end_points['score_label'].view(-1, 1)
+    
+#     criterion = nn.SmoothL1Loss(reduction='mean')
+#     score = end_points['score_pred']
+#     score_label = end_points['score_label']
+#     loss = criterion(score, score_label)
+#     end_points['loss/overall_loss'] = loss
+#     return loss, end_points
 
 
 def compute_score_loss(end_points):

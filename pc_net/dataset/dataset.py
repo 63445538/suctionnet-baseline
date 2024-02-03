@@ -168,8 +168,7 @@ class SuctionDataset(Dataset):
                             factor_depth)
 
         # generate cloud
-        cloud = create_point_cloud_from_depth_image(
-            depth, camera, organized=True)
+        cloud = create_point_cloud_from_depth_image(depth, camera, organized=True)
 
         # get valid points
         depth_mask = (depth > 0)
@@ -338,12 +337,12 @@ def collate_fn(batch):
 def minkowski_collate_fn(list_data):
     coordinates_batch, features_batch = ME.utils.sparse_collate([d["coors"] for d in list_data],
                                                                 [d["feats"] for d in list_data], dtype=torch.float32)
-    # coordinates_batch, features_batch, _, quantize2original = ME.utils.sparse_quantize(
-    #     coordinates_batch, features_batch, return_index=True, return_inverse=True)
+    coordinates_batch, features_batch, _, quantize2original = ME.utils.sparse_quantize(
+        coordinates_batch, features_batch, return_index=True, return_inverse=True)
     res = {
         "coors": coordinates_batch,
         "feats": features_batch,
-        # "quantize2original": quantize2original
+        "quantize2original": quantize2original
     }
 
     def collate_fn_(batch):

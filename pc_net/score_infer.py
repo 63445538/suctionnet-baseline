@@ -50,7 +50,7 @@ parser.add_argument('--save_root', default='save', help='where to save')
 parser.add_argument('--dataset_root', default='/data/rcao/dataset/graspnet', help='where dataset is')
 FLAGS = parser.parse_args()
 
-network_ver = 'v0.2.7.2'
+network_ver = 'v0.2.7.3'
 trained_epoch = 40
 save_ver = '{}_{}'.format(network_ver, trained_epoch)
 
@@ -69,13 +69,13 @@ torch.cuda.set_device(device)
 # net.eval()
 
 # 0.2.7.2
-from SNet import SuctionNet_prob
-net = SuctionNet_prob(feature_dim=512)
-net.to(device)
-checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint_{}.tar'.format(trained_epoch)), map_location=device)
-# checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint.tar'), map_location=device)
-net.load_state_dict(checkpoint['model_state_dict'])
-net.eval()
+# from SNet import SuctionNet_prob
+# net = SuctionNet_prob(feature_dim=512)
+# net.to(device)
+# checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint_{}.tar'.format(trained_epoch)), map_location=device)
+# # checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint.tar'), map_location=device)
+# net.load_state_dict(checkpoint['model_state_dict'])
+# net.eval()
 
 # # v0.2.6
 # from models.resunet import Res16UNet34CProbMG
@@ -87,13 +87,26 @@ net.eval()
 # net.eval()
 
 # v0.2.7
-# from models.resunet import Res16UNet34CAleatoric
-# net = Res16UNet34CAleatoric(in_channels=3, out_channels=1)
-# net.to(device)
-# checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint_{}.tar'.format(trained_epoch)), map_location=device)
-# # checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint.tar'), map_location=device)
-# net.load_state_dict(checkpoint['model_state_dict'])
-# net.eval()
+from models.resunet import Res16UNet34CAleatoric
+net = Res16UNet34CAleatoric(in_channels=3, out_channels=1)
+net.to(device)
+checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint_{}.tar'.format(trained_epoch)), map_location=device)
+# checkpoint = torch.load(os.path.join('log', 'snet_'+network_ver, camera, 'checkpoint.tar'), map_location=device)
+net.load_state_dict(checkpoint['model_state_dict'])
+net.eval()
+
+dropout_prob = 0.1
+# v0.2.7.1 0.5 v0.2.7.3 0.1
+import torch.nn.functional as F
+def dropout_hook_wrapper(module, sinput, soutput):
+    input = soutput.F
+    output = F.dropout(input, p=dropout_prob, training=True)
+    soutput_new = ME.SparseTensor(output, coordinate_map_key=soutput.coordinate_map_key, coordinate_manager=soutput.coordinate_manager)
+    return soutput_new
+for module in net.modules():
+    if isinstance(module, ME.MinkowskiConvolution):
+        module.register_forward_hook(dropout_hook_wrapper)
+
 
 epoch_num = checkpoint['epoch']
 print("network version:{}, epoch:{}".format(network_ver, epoch_num))
@@ -233,15 +246,15 @@ for scene_idx in scene_list:
 
         coordinates_batch, features_batch = ME.utils.sparse_collate(inst_coors_list, inst_feats_list,
                                                                     dtype=torch.float32)
-        coordinates_batch, features_batch, _, quantize2original = ME.utils.sparse_quantize(
-            coordinates_batch, features_batch, return_index=True, return_inverse=True)
+        # coordinates_batch, features_batch, _, quantize2original = ME.utils.sparse_quantize(
+        #     coordinates_batch, features_batch, return_index=True, return_inverse=True)
 
         score_gt = inst_seal_score_tensor * inst_wrench_score_tensor
         batch_data_label = {"point_clouds": inst_cloud_tensor,
                             "cloud_colors": inst_colors_tensor,
                             "coors": coordinates_batch.to(device),
                             "feats": features_batch.to(device),
-                            "quantize2original": quantize2original.to(device)
+                            # "quantize2original": quantize2original.to(device)
                             }
 
         # Forward pass
@@ -265,24 +278,24 @@ for scene_idx in scene_list:
         # wrench_score = torch.sum(torch.ones_like(wrench_score_prob) * wrench_score_prob, 1)
         # score = seal_score * wrench_score
 
-        with torch.no_grad():
-            end_points = net(batch_data_label)
+        # with torch.no_grad():
+        #     end_points = net(batch_data_label)
         
         # seal_score_pred = end_points['seal_score_pred']
         # wrench_score_pred = end_points['wrench_score_pred']
         # score = seal_score_pred * wrench_score_pred
         
-        score = end_points['score_pred']
+        # score = end_points['score_pred']
         
         # seal_score_pred = normalize_tensor(seal_score_pred)
         # wrench_score_pred = normalize_tensor(wrench_score_pred)
 
         # Forward pass v0.2.6
-        # with torch.no_grad():
-        #     in_data = ME.TensorField(features=batch_data_label['feats'], coordinates=batch_data_label['coors'],
-        #                             quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE)
+        with torch.no_grad():
+            in_data = ME.TensorField(features=batch_data_label['feats'], coordinates=batch_data_label['coors'],
+                                    quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE)
 
-        #     end_points = batch_data_label
+            end_points = batch_data_label
 
         #     score, emb_mu, emb_sigma = net(in_data)
         #     end_points['score_pred'] = score
@@ -293,13 +306,13 @@ for scene_idx in scene_list:
         #     score = score.view(B, point_num)
         #     uncertainty = emb_sigma.slice(in_data).F.view(B, point_num)
 
-            # score, sigma = net(in_data)
-            # end_points['score_pred'] = score
-            # end_points['sigma_pred'] = sigma
+            score, sigma = net(in_data)
+            end_points['score_pred'] = score
+            end_points['sigma_pred'] = sigma
 
-            # B, point_num, _ = inst_cloud_tensor.shape  # batch _size
-            # score = score.view(B, point_num)
-            # uncertainty = sigma.view(B, point_num)
+            B, point_num, _ = inst_cloud_tensor.shape  # batch _size
+            score = score.view(B, point_num)
+            uncertainty = sigma.view(B, point_num)
 
         mae_dict[scene_idx - 100, anno_idx] = mae_criterion(score, score_gt)
         mse_dict[scene_idx - 100, anno_idx] = mse_criterion(score, score_gt)
