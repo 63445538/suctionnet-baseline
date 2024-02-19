@@ -17,15 +17,16 @@ parser.add_argument('--split', default='test_seen', help='dataset split [default
 parser.add_argument('--camera', default='kinect', help='camera to use [default: kinect]')
 parser.add_argument('--network_ver', default='geo_v0.2', help='where to save')
 parser.add_argument('--dataset_root', default='/media/gpuadmin/rcao/dataset/graspnet', help='where dataset is')
-FLAGS = parser.parse_args()
+parser.add_argument('--num_workers', type=int, default=20, help='Number of workers used in evaluation [default: 30]')
+cfgs = parser.parse_args()
 
-print(FLAGS)
+print(cfgs)
 
 if __name__ == "__main__":
-    dataset_root = FLAGS.dataset_root
-    camera = FLAGS.camera
-    network_ver = FLAGS.network_ver
-    split = FLAGS.split
+    dataset_root = cfgs.dataset_root
+    camera = cfgs.camera
+    network_ver = cfgs.network_ver
+    split = cfgs.split
     suctionnet_eval = SuctionNetEval(root=dataset_root, camera=camera)
 
     result_path = os.path.join('pc_net', 'save', network_ver)
@@ -33,11 +34,11 @@ if __name__ == "__main__":
     # res is the raw evaluation results, ap_top50 and ap_top1 are average precision of top 50 and top 1 suctions
     # see our paper for details
     if split == 'test_seen':
-        res, ap_top50, ap_top1 = suctionnet_eval.eval_seen(dump_folder=result_path, proc=30)
+        res, ap_top50, ap_top1 = suctionnet_eval.eval_seen(dump_folder=result_path, proc=cfgs.num_workers)
     elif split == 'test_similar':
-        res, ap_top50, ap_top1 = suctionnet_eval.eval_similar(dump_folder=result_path, proc=30)
+        res, ap_top50, ap_top1 = suctionnet_eval.eval_similar(dump_folder=result_path, proc=cfgs.num_workers)
     else:
-        res, ap_top50, ap_top1 = suctionnet_eval.eval_novel(dump_folder=result_path, proc=30)
+        res, ap_top50, ap_top1 = suctionnet_eval.eval_novel(dump_folder=result_path, proc=cfgs.num_workers)
         
     save_path = os.path.join('pc_net', 'save', network_ver, 'dump_file', camera)
     os.makedirs(save_path, exist_ok=True)

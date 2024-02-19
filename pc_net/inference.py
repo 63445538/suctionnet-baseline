@@ -48,26 +48,30 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--split', default='test_novel', help='dataset split [default: test_seen]')
 parser.add_argument('--camera', default='realsense', help='camera to use [default: kinect]')
 parser.add_argument('--sample_time', default='4', help='sample times for uncertainty estimation')
-parser.add_argument('--save_root', default='save', help='where to save')
+parser.add_argument('--dump_dir', default='save', help='where to save')
 parser.add_argument('--gpu_id', default='0', help='GPU index')
 parser.add_argument('--network_ver', default='v0.2.7.4', help='where to save')
+parser.add_argument('--seg_model', default='uois', help='where to save')
 parser.add_argument('--epoch_num', default=40, help='where to save')
 parser.add_argument('--dataset_root', default='/media/gpuadmin/rcao/dataset/graspnet', help='where dataset is')
 parser.add_argument('--checkpoint_root', default='/media/gpuadmin/rcao/result/snet/', help='where dataset is')
-FLAGS = parser.parse_args()
-print(FLAGS)
+cfgs = parser.parse_args()
+print(cfgs)
 
-network_ver = FLAGS.network_ver
-trained_epoch = FLAGS.epoch_num
-sample_time = int(FLAGS.sample_time)
+network_ver = cfgs.network_ver
+trained_epoch = cfgs.epoch_num
+sample_time = int(cfgs.sample_time)
 save_ver = '{}_{}_{}'.format(network_ver+'.p', trained_epoch, sample_time)
-device = torch.device("cuda:{}".format(FLAGS.gpu_id) if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:{}".format(cfgs.gpu_id) if torch.cuda.is_available() else "cpu")
 
-split = FLAGS.split
-camera = FLAGS.camera
-dataset_root = FLAGS.dataset_root
-checkpoint_root = FLAGS.checkpoint_root
-save_root = os.path.join(FLAGS.save_root, save_ver)
+split = cfgs.split
+camera = cfgs.camera
+dataset_root = cfgs.dataset_root
+checkpoint_root = cfgs.checkpoint_root
+seg_model = cfgs.seg_model # 'uoais' 'uois'
+if seg_model not in ['uoais', 'uois']:
+    raise ValueError('unsupported segmentation model: ' + seg_model)
+dump_dir = cfgs.dump_dir
 torch.cuda.set_device(device)
 
 # net = SuctionNet(feature_dim=512, is_training=False)
@@ -129,7 +133,7 @@ def inference(scene_idx):
         rgb_path = os.path.join(dataset_root, 'scenes/scene_{:04d}/{}/rgb/{:04d}.png'.format(scene_idx, camera, anno_idx))
         depth_path = os.path.join(dataset_root, 'scenes/scene_{:04d}/{}/depth/{:04d}.png'.format(scene_idx, camera, anno_idx))
         gt_mask_path = os.path.join(dataset_root, 'scenes/scene_{:04d}/{}/label/{:04d}.png'.format(scene_idx, camera, anno_idx))
-        seg_mask_path = os.path.join(dataset_root, 'seg_mask/scene_{:04d}/{}/{:04d}.png'.format(scene_idx, camera, anno_idx))
+        seg_mask_path = os.path.join(dataset_root, '{}_mask/scene_{:04d}/{}/{:04d}.png'.format(seg_model, scene_idx, camera, anno_idx))
         meta_path = os.path.join(dataset_root, 'scenes/scene_{:04d}/{}/meta/{:04d}.mat'.format(scene_idx, camera, anno_idx))
         normal_path = os.path.join(dataset_root, 'normals/scene_{:04d}/{}/{:04d}.npy'.format(scene_idx, camera, anno_idx))
         # suction_score_path = os.path.join(dataset_root, 'suction/scene_{:04d}/{}/{:04d}.npz'.format(scene_idx, camera, anno_idx))
@@ -351,7 +355,7 @@ def inference(scene_idx):
         # suction_group = suction_group.nms(0.02, 181.0/180*np.pi)
         # suction_nms_arr = suction_group.suction_group_array
         
-        suction_dir = os.path.join(save_root, split, 'scene_%04d'%scene_idx, camera, 'suction')
+        suction_dir = os.path.join(dump_dir, split, 'scene_%04d'%scene_idx, camera, 'suction')
         os.makedirs(suction_dir, exist_ok=True)
         print('Saving:', suction_dir+'/%04d'%anno_idx+'.npz')
         np.savez(suction_dir+'/%04d'%anno_idx+'.npz', suction_arr)
@@ -368,7 +372,7 @@ def inference(scene_idx):
         # o3d.visualization.draw_geometries([downsampled_scene, *suckers], width=1536, height=864)
 
     result_dict = {'infer_time': np.array(infer_time_list)}
-    with open(os.path.join(save_root, split, 'scene_%04d'%scene_idx, camera, 'infer_time.pkl'), 'wb') as file:
+    with open(os.path.join(dump_dir, split, 'scene_%04d'%scene_idx, camera, 'infer_time.pkl'), 'wb') as file:
         pickle.dump(result_dict, file)
 
 scene_list = []
