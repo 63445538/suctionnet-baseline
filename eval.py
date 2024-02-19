@@ -16,7 +16,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--split', default='test_seen', help='dataset split [default: test_seen]')
 parser.add_argument('--camera', default='kinect', help='camera to use [default: kinect]')
 parser.add_argument('--network_ver', default='geo_v0.2', help='where to save')
-parser.add_argument('--dataset_root', default='/data/rcao/dataset/graspnet', help='where dataset is')
+parser.add_argument('--dataset_root', default='/media/gpuadmin/rcao/dataset/graspnet', help='where dataset is')
 FLAGS = parser.parse_args()
 
 print(FLAGS)

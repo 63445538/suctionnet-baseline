@@ -39,24 +39,29 @@ num_pt = 1024
 width = 1280
 height = 720
 voxel_size = 0.002
+# 0.005 large degradation 
+# Top-50 AP: 37.99 -> 12.26 (seen) 37.73 -> 15.60 (similar) 9.5 -> 3.16 (novel)
 suction_height = 0.1
 suction_radius = 0.01
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--split', default='test_novel', help='dataset split [default: test_seen]')
 parser.add_argument('--camera', default='realsense', help='camera to use [default: kinect]')
 parser.add_argument('--sample_time', default='4', help='sample times for uncertainty estimation')
 parser.add_argument('--save_root', default='save', help='where to save')
-parser.add_argument('--dataset_root', default='/data/rcao/dataset/graspnet', help='where dataset is')
-parser.add_argument('--checkpoint_root', default='/data/rcao/result/snet/', help='where dataset is')
+parser.add_argument('--gpu_id', default='0', help='GPU index')
+parser.add_argument('--network_ver', default='v0.2.7.4', help='where to save')
+parser.add_argument('--epoch_num', default=40, help='where to save')
+parser.add_argument('--dataset_root', default='/media/gpuadmin/rcao/dataset/graspnet', help='where dataset is')
+parser.add_argument('--checkpoint_root', default='/media/gpuadmin/rcao/result/snet/', help='where dataset is')
 FLAGS = parser.parse_args()
 print(FLAGS)
 
-network_ver = 'v0.2.7.4'
-trained_epoch = 60
+network_ver = FLAGS.network_ver
+trained_epoch = FLAGS.epoch_num
 sample_time = int(FLAGS.sample_time)
 save_ver = '{}_{}_{}'.format(network_ver+'.p', trained_epoch, sample_time)
+device = torch.device("cuda:{}".format(FLAGS.gpu_id) if torch.cuda.is_available() else "cpu")
 
 split = FLAGS.split
 camera = FLAGS.camera
