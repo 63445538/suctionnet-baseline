@@ -1,2 +1,2 @@
-python pc_net/inference.py --split test_seen --camera realsense --network_ver 'v0.2.7.4' --dump_dir 'pc_net/save/v0.2.7.4_uoais.p' --seg_model 'uoais' --epoch_num 40 --gpu_id 0 --sample_time 20
-python eval.py --split test_seen --network_ver v0.2.7.4_uoais.p --camera realsense
+python pc_net/inference.py --split test_seen --camera kinect --network_ver 'v0.2.7.4' --dump_dir 'pc_net/save/v0.2.7.4_uoais.p' --seg_model 'uoais' --epoch_num 60 --gpu_id 2 --sample_time 20
+python eval.py --split test_seen --network_ver v0.2.7.4_uoais.p --camera kinect

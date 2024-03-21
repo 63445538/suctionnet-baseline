@@ -7,14 +7,10 @@ from PIL import Image
 import scipy.io as scio
 import random
 import torch
-from torch._six import container_abcs
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
-from utils.image import get_affine_transform, gaussian_radius, draw_msra_gaussian
 
-
-BASEDIR = os.path.dirname(os.path.abspath(__file__))
-CFGPATH = '{}/cfg'.format(BASEDIR)
+from utils.image import get_affine_transform
 
 
 class CameraInfo():
@@ -83,33 +79,22 @@ def drawGaussian(img, pt, score, sigma=1):
 
 
 class ARCDataset(Dataset):
-    def __init__(self, data_root, label_root, split='train', input_size=(480, 480), adapt_radius=True):
+    def __init__(self, dataset_root, split='train', data_aug=False, input_size=(480, 480)):
         # assert(num_points<=50000)
-        self.data_root = data_root
-        self.label_root = label_root
+        self.dataset_root = dataset_root
         self.split = split
         self.dim = input_size
-        self.adapt_radius = adapt_radius
         self.data_rng = np.random.RandomState(123)
+        self.data_aug = data_aug
         # self.remove_outlier = remove_outlier
         # self.valid_obj_idxs = valid_obj_idxs
         # self.augment = augment
         # self.crop = crop
-        # camera_split = 'data' if camera == 'realsense' else 'data_kinect'
-        # self.collision_labels = {}
-
-        # f = open(os.path.join(CFGPATH, '{}_data_list.txt'.format(split)))
-        # self.data_list = []
-
-        # for x in tqdm(f.readlines(), desc = 'Loading data path and collision labels...'):
-        #     for img_num in range(256):
-        #         self.data_list.append([int(x.strip().split('_')[1]), img_num])
-        # f.close()
-        
+                
         self.data_list = []
-        with open(os.path.join(self.data_root, '{}-split.txt'.format(self.split))) as f:
+        with open(os.path.join(self.dataset_root, '{}-split.txt'.format(self.split))) as f:
             for line in f:
-                self.data_list.append(line)
+                self.data_list.append(line.strip())
         if split == 'train':
             random.shuffle(self.data_list)
 
@@ -117,118 +102,32 @@ class ARCDataset(Dataset):
         return len(self.data_list)
 
     def __getitem__(self, index):
-        scene_idx, anno_idx = self.data_list[index][0], self.data_list[index][1]
+        scene_name = self.data_list[index]
 
-        color_dir = os.path.join(self.data_root, 'color-input', 'scene_%04d'%scene_idx, self.camera, 'rgb', str(anno_idx).zfill(4)+'.png')
-        depth_dir = os.path.join(self.data_root, 'depth-input', 'scene_%04d'%scene_idx, self.camera, 'depth', str(anno_idx).zfill(4)+'.png')
-        score_dir = os.path.join(self.label_root, 'label', 'scene_%d'%scene_idx, self.camera, 'numpy', '%04d.npz'%anno_idx)
+        color_dir = os.path.join(self.dataset_root, 'color-input', scene_name + '.png')
+        depth_dir = os.path.join(self.dataset_root, 'depth-input',  scene_name + '.png')
+        score_dir = os.path.join(self.dataset_root, 'label', scene_name + '.png')
         
         # print('color_dir:', color_dir)
         # tic = time.time()
-        color = cv2.imread(color_dir).astype(np.float32) / 255.0
-        depth = cv2.imread(depth_dir, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000.0
+        color = cv2.imread(color_dir, cv2.IMREAD_UNCHANGED).astype(np.float32) / 255.0
+        depth = cv2.imread(depth_dir, cv2.IMREAD_UNCHANGED).astype(np.float32) / 10000.0
+        score = cv2.imread(score_dir, cv2.IMREAD_UNCHANGED).astype(np.int16)
         # toc = time.time()
         # print('input read time:', toc-tic)
 
-        # tic = time.time()
-        score = np.load(score_dir)['arr_0']
-        # toc = time.time()
-        # print('score map load time:', toc-tic)
-        
         if self.split == 'train':
-            color, depth, score, center_map = self.crop_array(color, depth, score, center_map, self.dim)
+            color, depth, score = self.crop_array(color, depth, score, self.dim)
             # color_noise = np.random.normal(scale=0.03, size=color.shape).astype(np.float32)
             depth_noise = np.random.normal(scale=0.03, size=depth.shape).astype(np.float32)
-
             # color = color + color_noise
-            color = color_aug(self.data_rng, color)
-            depth = depth + depth_noise
+            if self.data_aug:
+                color = color_aug(self.data_rng, color)
+                depth = depth + depth_noise
 
-        return color, depth, score, (scene_idx, anno_idx)
+        return color, depth, score, scene_name
     
-
-    def debug(self, saveroot):
-        
-        for index in range(30):
-            scene_idx, anno_idx = self.data_list[index][0], self.data_list[index][1]
-
-            dump_dir = os.path.join(self.label_root, 'center_anno', 'scene_%d'%scene_idx, self.camera, '0255.npz')
-            bbox_dir = os.path.join(self.label_root, 'bbox_anno', 'scene_%d'%scene_idx, self.camera, '0255.npz')
-            center_dump = np.load(dump_dir)['arr_0'][anno_idx]
-            bbox_dump = np.load(bbox_dir)['arr_0'][anno_idx]
-
-            color_dir = os.path.join(self.data_root, 'scenes', 'scene_%04d'%scene_idx, self.camera, 'rgb', str(anno_idx).zfill(4)+'.png')
-            depth_dir = os.path.join(self.data_root, 'scenes', 'scene_%04d'%scene_idx, self.camera, 'depth', str(anno_idx).zfill(4)+'.png')
-            score_dir = os.path.join(self.label_root, 'score_maps', 'scene_%d'%scene_idx, self.camera, 'numpy', '%04d.npz'%anno_idx)
-
-            # print('color_dir:', color_dir)
-            color = cv2.imread(color_dir).astype(np.float32)
-            depth = cv2.imread(depth_dir, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000.0
-            score = np.load(score_dir)['arr_0']
-
-            center_map = np.zeros_like(depth)
-            for i in range(center_dump.shape[0]):
-                center = center_dump[i]
-                coord = [center[1], center[0]]
-                if not self.adapt_radius:
-                    drawGaussian(center_map, coord, 1, 5)
-                else:
-                    bbox = bbox_dump[i]
-                    bbox_h, bbox_w = bbox[2]-bbox[0], bbox[3]-bbox[1]
-                    radius = gaussian_radius((math.ceil(bbox_h), math.ceil(bbox_w)))
-                    draw_msra_gaussian(center_map, coord, radius)
-        
-            # center_map = center_map[..., 0]
-
-            if self.split == 'train':
-                color, depth, score, center_map = self.crop_array(color, depth, score, center_map, self.dim)
-            # print('score1:', score.dtype)
-            # score = score * colli
-            # score = score.astype(np.float32)
-
-            # idx0, idx1 = np.nonzero(mask)
-            # print('idx0:', idx0)
-            # print('idx1:', idx1)
-
-            # print('idx0:', type(idx0))
-            score_image = score
-            wrench_image = center_map
-            
-            score_image *= 255
-            score_image = score_image.clip(0, 255)
-            score_image = score_image.astype(np.uint8)
-            score_image = cv2.applyColorMap(score_image[..., np.newaxis], cv2.COLORMAP_RAINBOW)
-            # rgb_image = score_image
-            # score_image = np.array(score_image).astype(np.float32)
-            rgb_image = 0.5 * color + 0.5 * score_image
-            rgb_image = rgb_image.astype(np.uint8)
-            im = Image.fromarray(rgb_image)
-            
-            visu_dir = os.path.join(saveroot, 'scene_'+str(scene_idx))
-            os.makedirs(visu_dir, exist_ok=True)
-            print('Saving:', visu_dir+'/score_%04d'%anno_idx+'.png')
-            # start_time = time.time()
-            im.save(visu_dir+'/score_%04d'%anno_idx+'.png')
-
-            wrench_image *= 255
-            
-            wrench_image = wrench_image.clip(0, 255)
-            wrench_image = wrench_image.astype(np.uint8)
-            wrench_image = cv2.applyColorMap(wrench_image[..., np.newaxis], cv2.COLORMAP_RAINBOW)
-            # rgb_image = wrench_image
-            # wrench_image = np.array(wrench_image).astype(np.float32)
-            rgb_image = 0.5 * color + 0.5 * wrench_image
-            rgb_image = rgb_image.astype(np.uint8)
-            im = Image.fromarray(rgb_image)
-            
-            visu_dir = os.path.join(saveroot, 'scene_'+str(scene_idx))
-            os.makedirs(visu_dir, exist_ok=True)
-            print('Saving:', visu_dir+'/wrench_%04d'%anno_idx+'.png')
-            # start_time = time.time()
-            im.save(visu_dir+'/wrench_%04d'%anno_idx+'.png')
-
-
-    def augment(self, img, depth, score, center_map):
+    def augment(self, img, depth, score):
         input_h, input_w = img.shape[0], img.shape[1]
         s = max(input_h, input_w) * 1.0
         c = np.array([input_w / 2., input_h / 2.], dtype=np.float32)
@@ -247,7 +146,6 @@ class ARCDataset(Dataset):
             img = img[:, ::-1, :]
             depth = depth[:, ::-1]
             score = score[:, ::-1]
-            center_map = center_map[:, ::-1]
             c[0] = input_w - c[0] - 1
         
         trans_input = get_affine_transform(c, s, 0, [input_w, input_h])
@@ -260,11 +158,8 @@ class ARCDataset(Dataset):
         score = cv2.warpAffine(score, trans_input, 
                             (input_w, input_h),
                             flags=cv2.INTER_NEAREST)
-        center_map = cv2.warpAffine(center_map, trans_input, 
-                            (input_w, input_h),
-                            flags=cv2.INTER_NEAREST)
 
-        return img, depth, score, center_map
+        return img, depth, score
 
     def _get_border(self, border, size):
         i = 1
@@ -272,16 +167,39 @@ class ARCDataset(Dataset):
             i *= 2
         return border // i
     
-    def crop_array(self, color, depth, score, center_map, t_size=(480, 480)):
-        height, width = color.shape[0], color.shape[1]
-        center_x = np.random.randint(t_size[1] // 2, width - t_size[1] // 2)
-        center_y = np.random.randint(t_size[0] // 2, height - t_size[0] // 2)
+    # def crop_array(self, color, depth, score, t_size=(480, 480)):
+    #     height, width = color.shape[0], color.shape[1]
+    #     center_x = np.random.randint(t_size[1] // 2, width - t_size[1] // 2)
+    #     center_y = np.random.randint(t_size[0] // 2, height - t_size[0] // 2)
 
-        cropped_color = color[center_y-t_size[0]//2:center_y+t_size[0]//2, center_x-t_size[1]//2:center_x+t_size[1]//2]
-        cropped_depth = depth[center_y-t_size[0]//2:center_y+t_size[0]//2, center_x-t_size[1]//2:center_x+t_size[1]//2]
-        cropped_score = score[center_y-t_size[0]//2:center_y+t_size[0]//2, center_x-t_size[1]//2:center_x+t_size[1]//2]
-        cropped_center_map = center_map[center_y-t_size[0]//2:center_y+t_size[0]//2, center_x-t_size[1]//2:center_x+t_size[1]//2]
-        return cropped_color, cropped_depth, cropped_score, cropped_center_map
+    #     cropped_color = color[center_y-t_size[0]//2:center_y+t_size[0]//2, center_x-t_size[1]//2:center_x+t_size[1]//2]
+    #     cropped_depth = depth[center_y-t_size[0]//2:center_y+t_size[0]//2, center_x-t_size[1]//2:center_x+t_size[1]//2]
+    #     cropped_score = score[center_y-t_size[0]//2:center_y+t_size[0]//2, center_x-t_size[1]//2:center_x+t_size[1]//2]
+    #     return cropped_color, cropped_depth, cropped_score
+
+    def crop_array(self, color, depth, score, t_size=(480, 480)):
+        height, width = color.shape[:2]
+        # 高度方向上不随机选择中心，因为裁剪大小等于原图大小
+        center_y = t_size[0] // 2
+        
+        # 宽度方向上进行随机选择中心点
+        if width > t_size[1]:
+            center_x = np.random.randint(t_size[1] // 2, width - t_size[1] // 2)
+        else:
+            center_x = width // 2  # 如果宽度小于等于目标裁剪尺寸，则直接使用中心
+        
+        # 计算裁剪的起始和结束位置
+        start_x = max(center_x - t_size[1] // 2, 0)
+        end_x = start_x + t_size[1]
+        start_y = max(center_y - t_size[0] // 2, 0)
+        end_y = start_y + t_size[0]
+        
+        # 根据计算的起始和结束位置进行裁剪
+        cropped_color = color[start_y:end_y, start_x:end_x]
+        cropped_depth = depth[start_y:end_y, start_x:end_x]
+        cropped_score = score[start_y:end_y, start_x:end_x]
+
+        return cropped_color, cropped_depth, cropped_score
 
 def grayscale(image):
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -334,7 +252,39 @@ def color_aug2(data_rng, image, eig_val, eig_vec):
 
 
 if __name__ == "__main__":
-    img_path = r'G:\DataSet\COCO\001.jpg'
-    img = cv2.imread(img_path)
+    dataset_root = '/media/gpuadmin/rcao/dataset/ARC'
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    train_dataset = ARCDataset(dataset_root, split='train')
+    vis_root = os.path.join('vis')
+    os.makedirs(vis_root, exist_ok=True)
+    
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=1,
+        shuffle=True,
+        num_workers=8,
+        pin_memory=False
+        )
+    
+    for i, data in train_loader:
+        image, depth, label, scene_name = data[0], data[1], data[2], data[3]
+        image = image.to(device)
+        depth = depth.to(device)
+        label = label.to(device)
 
-    print(img.max())
+        image_vis = image.detach().cpu().numpy()
+        depth_vis = depth.detach().cpu().numpy() * 1000.0
+        label_vis = label.detach().cpu().numpy()
+        label_vis = label_vis / np.max(label_vis) * 255
+        cv2.imwrite(os.path.join(vis_root, scene_name + '_image.png'), image_vis)
+        cv2.imwrite(os.path.join(vis_root, scene_name + '_depth.png'), depth_vis)
+        cv2.imwrite(os.path.join(vis_root, scene_name + '_label.png'), label_vis)
+         
+        if i > 0:
+            break
+        
+    print(len(train_dataset))
+
+    # end_points = train_dataset[233]
+    # cloud = end_points['point_clouds']
+    # seg = end_points['objectness_label']

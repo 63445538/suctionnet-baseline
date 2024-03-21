@@ -17,7 +17,7 @@ parser.add_argument('--split', default='test_seen', help='dataset split [default
 parser.add_argument('--camera', default='kinect', help='camera to use [default: kinect]')
 parser.add_argument('--network_ver', default='geo_v0.2', help='where to save')
 parser.add_argument('--dataset_root', default='/media/gpuadmin/rcao/dataset/graspnet', help='where dataset is')
-parser.add_argument('--num_workers', type=int, default=20, help='Number of workers used in evaluation [default: 30]')
+parser.add_argument('--num_workers', type=int, default=10, help='Number of workers used in evaluation [default: 30]')
 cfgs = parser.parse_args()
 
 print(cfgs)

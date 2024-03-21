@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import argparse
-from suctionnet.suctionnet_dataset import SuctionNetDataset
+from dataset.suctionnet_dataset import SuctionNetDataset
 import ConvNet
 import DeepLabV3Plus.network as network
 from utils.avgmeter import AverageMeter

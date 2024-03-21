@@ -9,11 +9,11 @@ import scipy.io as scio
 import time
 import pickle
 
-import sys
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(ROOT_DIR, '..', 'utils'))
+# import sys
+# ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+# sys.path.append(os.path.join(ROOT_DIR, '..', 'utils'))
 
-from data_utils import CameraInfo, create_point_cloud_from_depth_image, get_workspace_mask
+from ..utils.data_utils import CameraInfo, create_point_cloud_from_depth_image, get_workspace_mask
 import MinkowskiEngine as ME
 
 from suctionnetAPI.utils.rotation import viewpoint_to_matrix
@@ -45,13 +45,13 @@ suction_height = 0.1
 suction_radius = 0.01
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--split', default='test_novel', help='dataset split [default: test_seen]')
-parser.add_argument('--camera', default='realsense', help='camera to use [default: kinect]')
-parser.add_argument('--sample_time', default='4', help='sample times for uncertainty estimation')
+parser.add_argument('--split', default='test_similar', help='dataset split [default: test_seen]')
+parser.add_argument('--camera', default='kinect', help='camera to use [default: kinect]')
+parser.add_argument('--sample_time', default=20, help='sample times for uncertainty estimation')
 parser.add_argument('--dump_dir', default='save', help='where to save')
 parser.add_argument('--gpu_id', default='0', help='GPU index')
 parser.add_argument('--network_ver', default='v0.2.7.4', help='where to save')
-parser.add_argument('--seg_model', default='uois', help='where to save')
+parser.add_argument('--seg_model', default='uoais', help='where to save')
 parser.add_argument('--epoch_num', default=40, help='where to save')
 parser.add_argument('--dataset_root', default='/media/gpuadmin/rcao/dataset/graspnet', help='where dataset is')
 parser.add_argument('--checkpoint_root', default='/media/gpuadmin/rcao/result/snet/', help='where dataset is')
@@ -274,8 +274,8 @@ def inference(scene_idx):
         with torch.no_grad():
             Sample_T = sample_time
             Bs, point_num = inst_cloud_tensor.shape[:2]
-            score_sample = torch.zeros(Sample_T, Bs, point_num)
-            sigma_sample = torch.zeros(Sample_T, Bs, point_num)
+            score_sample = torch.zeros(Sample_T, Bs, point_num).to(device)
+            sigma_sample = torch.zeros(Sample_T, Bs, point_num).to(device)
             for i in range(Sample_T):
                 # in_data = ME.TensorField(features=batch_data_label['feats'], coordinates=batch_data_label['coors'],
                 #                 quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE)
@@ -299,6 +299,9 @@ def inference(scene_idx):
             scores = torch.mean(score_sample, dim=0)
             uncertainty = torch.mean(torch.square(score_sample), dim=0) - torch.square(torch.mean(score_sample, dim=0)) + torch.mean(sigma_sample, dim=0)
             uncertainty = uncertainty / uncertainty.max(dim=1, keepdim=True)[0]
+            # min-max normalization
+            # uncertainty = (uncertainty - uncertainty.min(dim=1, keepdim=True)[0]) \
+            #     / (uncertainty.max(dim=1, keepdim=True)[0] - uncertainty.min(dim=1, keepdim=True)[0])
         
         torch.cuda.synchronize()
         infer_time = time.time() - start
