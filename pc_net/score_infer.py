@@ -7,11 +7,8 @@ from PIL import Image
 import scipy.io as scio
 
 import pickle
-import sys
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(ROOT_DIR, '..', 'utils'))
 
-from data_utils import CameraInfo, create_point_cloud_from_depth_image, get_workspace_mask
+from utils.data_utils import CameraInfo, create_point_cloud_from_depth_image, get_workspace_mask
 import MinkowskiEngine as ME
 
 # from suctionnetAPI.utils.rotation import viewpoint_to_matrix
@@ -41,7 +38,6 @@ voxel_size = 0.002
 suction_height = 0.1
 suction_radius = 0.01
 device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--split', default='test', help='dataset split [default: test_seen]')
