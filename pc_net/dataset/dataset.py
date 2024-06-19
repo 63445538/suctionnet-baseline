@@ -51,7 +51,7 @@ def batch_get_wrench_score(suction_points, directions, center, g_direction):
 
 class SuctionDataset(Dataset):
     def __init__(self, root, valid_obj_idxs, camera='kinect', split='train', num_points=1024,
-                 remove_outlier=False, remove_invisible=True, augment=False, load_label=True):
+                 remove_outlier=False, remove_invisible=True, augment=False, load_label=True, visib_threshold=0.0, voxel_size=0.002):
         self.root = root
         self.split = split
         self.num_points = num_points
@@ -62,9 +62,10 @@ class SuctionDataset(Dataset):
         self.augment = augment
         self.load_label = load_label
         self.collision_labels = {}
-        self.voxel_size = 0.002
+        self.voxel_size = voxel_size
         self.minimum_num_pt = 50
-        self.eps = 1e-12
+        self.visib_threshold = visib_threshold
+        self.eps = 1e-8
 
         self.bins = np.array([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
         if split == 'train':
@@ -87,6 +88,7 @@ class SuctionDataset(Dataset):
         self.frameid = []
         self.suctionnesspath = []
         self.normalpath = []
+        self.visibpath = []
         for x in tqdm(self.sceneIds, desc='Loading data path and collision labels...'):
             for img_num in range(256):
                 self.colorpath.append(os.path.join(
@@ -100,6 +102,7 @@ class SuctionDataset(Dataset):
                 self.scenename.append(x.strip())
                 self.frameid.append(img_num)
                 self.normalpath.append(os.path.join(root, 'normals', x, camera, str(img_num).zfill(4) + '.npy'))
+                self.visibpath.append(os.path.join(root, 'visib_info', x, camera, str(img_num).zfill(4)+'.mat'))
                 if self.load_label:
                     self.suctionnesspath.append(
                         os.path.join(root, 'suction', x, camera, str(img_num).zfill(4) + '.npz'))
@@ -172,7 +175,7 @@ class SuctionDataset(Dataset):
 
         # get valid points
         depth_mask = (depth > 0)
-        seg_mask = (seg > 0)
+        # seg_mask = (seg > 0)
         if self.remove_outlier:
             camera_poses = np.load(os.path.join(self.root, 'scenes', scene, self.camera, 'camera_poses.npy'))
             align_mat = np.load(os.path.join(self.root, 'scenes', scene, self.camera, 'cam0_wrt_table.npy'))
@@ -183,7 +186,7 @@ class SuctionDataset(Dataset):
             mask = depth_mask
         cloud_masked = cloud[mask]
         color_masked = color[mask]
-        seg_masked = seg[mask]
+        # seg_masked = seg[mask]
         
         if return_raw_cloud:
             return cloud_masked, color_masked
@@ -212,14 +215,14 @@ class SuctionDataset(Dataset):
         depth = np.array(Image.open(self.depthpath[index]))
         seg = np.array(Image.open(self.labelpath[index]))
         meta = scio.loadmat(self.metapath[index])
+        visib_info = scio.loadmat(self.visibpath[index])
         scene = self.scenename[index]
-        normal = np.load(self.normalpath[index])
+        # normal = np.load(self.normalpath[index])
         
         # for each point in workspace masked point cloud
-        
         suctionness = np.load(self.suctionnesspath[index])
         seal_score = suctionness['seal_score']
-        # wrench_score = suctionness['wrench_score']
+        wrench_score = suctionness['wrench_score']
 
         try:
             obj_idxs = meta['cls_indexes'].flatten().astype(np.int32)
@@ -250,16 +253,17 @@ class SuctionDataset(Dataset):
             mask = depth_mask
         cloud_masked = cloud[mask]
         color_masked = color[mask]
-        normal_masked = normal
+        # normal_masked = normal
         seg_masked = seg[mask]
 
         while 1:
             choose_idx = np.random.choice(np.arange(len(obj_idxs)))
             inst_mask = seg_masked == obj_idxs[choose_idx]
             inst_mask_len = inst_mask.sum()
-            if inst_mask_len > self.minimum_num_pt:
+            inst_visib_fract = float(visib_info[str(obj_idxs[choose_idx])]['visib_fract'])
+            if inst_mask_len > self.minimum_num_pt and inst_visib_fract > self.visib_threshold:
                 break
-
+            
         if inst_mask_len >= self.num_points:
             idxs = np.random.choice(inst_mask_len, self.num_points, replace=False)
         else:
@@ -270,19 +274,19 @@ class SuctionDataset(Dataset):
         # inst_mask = inst_mask[idxs]
         inst_cloud = cloud_masked[inst_mask][idxs]
         inst_color = color_masked[inst_mask][idxs]
-        inst_normals = normal_masked[inst_mask][idxs]
+        # inst_normals = normal_masked[inst_mask][idxs]
         inst_seal_score = seal_score[inst_mask][idxs]
-        # inst_wrench_score = wrench_score[inst_mask][idxs]
+        inst_wrench_score = wrench_score[inst_mask][idxs]
 
         inst_seal_score = inst_seal_score[:, 0]
-        # inst_wrench_score = inst_wrench_score[:, 0]
+        inst_wrench_score = inst_wrench_score[:, 0]
 
         obj_pose = np.transpose(poses, (2, 0, 1))[choose_idx]
         if self.augment:
             inst_cloud, obj_pose_list = self.augment_data(inst_cloud, [obj_pose])
         else:
             obj_pose_list = [obj_pose]
-        inst_wrench_score = self.get_wrench_score(inst_cloud, inst_normals, obj_pose_list[0], camera_pose)
+        # inst_wrench_score = self.get_wrench_score(inst_cloud, inst_normals, obj_pose_list[0], camera_pose)
 
         inst_seal_score_ids = np.digitize(inst_seal_score, self.bins)
         inst_wrench_score_ids = np.digitize(inst_wrench_score, self.bins)

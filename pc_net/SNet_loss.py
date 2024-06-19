@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
 import MinkowskiEngine as ME
-from metric_loss import MetricLoss
+# from metric_loss import MetricLoss
 from aleatoric_loss import AleatoricLoss
 
 aleatoric_criterion = AleatoricLoss(is_log_sigma=False, res_loss='l1', nb_samples=10)
-metric_criterion = MetricLoss(nsample=18, kl_scale_factor=1e-4, epsilon=0.1)
+# metric_criterion = MetricLoss(nsample=18, kl_scale_factor=1e-4, epsilon=0.1)
 
 # def get_loss(end_points):
 #     seal_loss, end_points = compute_seal_score_loss(end_points)
@@ -72,22 +72,22 @@ def compute_score_loss(end_points):
     return loss, end_points
 
 
-def compute_metric_loss(end_points):
-    emb_mu_dense = end_points['emb_mu_dense']
-    emb_sigma_dense = end_points['emb_sigma_dense']
+# def compute_metric_loss(end_points):
+#     emb_mu_dense = end_points['emb_mu_dense']
+#     emb_sigma_dense = end_points['emb_sigma_dense']
 
-    label_dense = end_points['score_label']
-    xyz_dense = end_points['coors']
+#     label_dense = end_points['score_label']
+#     xyz_dense = end_points['coors']
     
-    xyz_sparse, unique_map = ME.utils.sparse_quantize(xyz_dense, return_index=True)
-    labels_sparse = label_dense[unique_map]
-    emb_mu_sparse = emb_mu_dense.F[unique_map]
-    emb_sigma_sparse = emb_sigma_dense.F[unique_map]
+#     xyz_sparse, unique_map = ME.utils.sparse_quantize(xyz_dense, return_index=True)
+#     labels_sparse = label_dense[unique_map]
+#     emb_mu_sparse = emb_mu_dense.F[unique_map]
+#     emb_sigma_sparse = emb_sigma_dense.F[unique_map]
 
-    loss, _ = metric_criterion(emb_mu_sparse, emb_sigma_sparse, xyz_sparse, labels_sparse.view(-1, 1))
-    end_points['loss/metric_loss'] = loss
+#     loss, _ = metric_criterion(emb_mu_sparse, emb_sigma_sparse, xyz_sparse, labels_sparse.view(-1, 1))
+#     end_points['loss/metric_loss'] = loss
     
-    return loss, end_points
+#     return loss, end_points
 
 
 def compute_seal_score_loss(end_points):
