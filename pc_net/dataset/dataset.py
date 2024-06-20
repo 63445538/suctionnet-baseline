@@ -51,7 +51,7 @@ def batch_get_wrench_score(suction_points, directions, center, g_direction):
 
 class SuctionDataset(Dataset):
     def __init__(self, root, valid_obj_idxs, camera='kinect', split='train', num_points=1024,
-                 remove_outlier=False, remove_invisible=True, augment=False, load_label=True, visib_threshold=0.0, voxel_size=0.002):
+                 remove_outlier=False, remove_invisible=True, real_data=True, syn_data=False, augment=False, load_label=True, visib_threshold=0.0, voxel_size=0.002):
         self.root = root
         self.split = split
         self.num_points = num_points
@@ -66,6 +66,8 @@ class SuctionDataset(Dataset):
         self.minimum_num_pt = 50
         self.visib_threshold = visib_threshold
         self.eps = 1e-8
+        self.syn_data = syn_data
+        self.real_data = real_data
 
         self.bins = np.array([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0])
         if split == 'train':
@@ -89,27 +91,42 @@ class SuctionDataset(Dataset):
         self.suctionnesspath = []
         self.normalpath = []
         self.visibpath = []
+        self.real_flags = []
         for x in tqdm(self.sceneIds, desc='Loading data path and collision labels...'):
             for img_num in range(256):
-                self.colorpath.append(os.path.join(
-                    root, 'scenes', x, camera, 'rgb', str(img_num).zfill(4) + '.png'))
-                self.depthpath.append(os.path.join(
-                    root, 'scenes', x, camera, 'depth', str(img_num).zfill(4) + '.png'))
-                self.labelpath.append(os.path.join(
-                    root, 'scenes', x, camera, 'label', str(img_num).zfill(4) + '.png'))
-                self.metapath.append(os.path.join(
-                    root, 'scenes', x, camera, 'meta', str(img_num).zfill(4) + '.mat'))
-                self.scenename.append(x.strip())
-                self.frameid.append(img_num)
-                self.normalpath.append(os.path.join(root, 'normals', x, camera, str(img_num).zfill(4) + '.npy'))
-                self.visibpath.append(os.path.join(root, 'visib_info', x, camera, str(img_num).zfill(4)+'.mat'))
-                if self.load_label:
-                    self.suctionnesspath.append(
-                        os.path.join(root, 'suction', x, camera, str(img_num).zfill(4) + '.npz'))
-                # collision_labels = np.load(os.path.join(root, 'collision_label', x.strip(),  'collision_labels.npz'))
-                # self.collision_labels[x.strip()] = {}
-                # for i in range(len(collision_labels)):
-                #     self.collision_labels[x.strip()][i] = collision_labels['arr_{}'.format(i)]
+                if self.real_data:
+                    self.colorpath.append(os.path.join(
+                        root, 'scenes', x, camera, 'rgb', str(img_num).zfill(4) + '.png'))
+                    self.depthpath.append(os.path.join(
+                        root, 'scenes', x, camera, 'depth', str(img_num).zfill(4) + '.png'))
+                    self.labelpath.append(os.path.join(
+                        root, 'scenes', x, camera, 'label', str(img_num).zfill(4) + '.png'))
+                    self.metapath.append(os.path.join(
+                        root, 'scenes', x, camera, 'meta', str(img_num).zfill(4) + '.mat'))
+                    self.scenename.append(x.strip())
+                    self.frameid.append(img_num)
+                    # self.normalpath.append(os.path.join(root, 'normals', x, camera, str(img_num).zfill(4) + '.npy'))
+                    self.visibpath.append(os.path.join(root, 'visib_info', x, camera, str(img_num).zfill(4)+'.mat'))
+                    if self.load_label:
+                        self.suctionnesspath.append(
+                            os.path.join(root, 'suction_real', x, camera, str(img_num).zfill(4) + '.npz'))
+                    self.real_flags.append(True)
+                    # collision_labels = np.load(os.path.join(root, 'collision_label', x.strip(),  'collision_labels.npz'))
+                    # self.collision_labels[x.strip()] = {}
+                    # for i in range(len(collision_labels)):
+                    #     self.collision_labels[x.strip()][i] = collision_labels['arr_{}'.format(i)]
+                if self.syn_data:
+                    self.colorpath.append(os.path.join(root, 'virtual_scenes', x, camera, str(img_num).zfill(4)+'_rgb.png'))
+                    self.depthpath.append(os.path.join(root, 'virtual_scenes', x, camera, str(img_num).zfill(4)+'_depth.png'))
+                    self.labelpath.append(os.path.join(root, 'virtual_scenes', x, camera, str(img_num).zfill(4)+'_label.png'))
+                    self.metapath.append(os.path.join(root, 'scenes', x, camera, 'meta', str(img_num).zfill(4)+'.mat'))
+                    self.visibpath.append(os.path.join(root, 'visib_info', x, camera, str(img_num).zfill(4)+'.mat'))   
+                    if self.load_label:
+                        self.suctionnesspath.append(
+                            os.path.join(root, 'suction_syn', x, camera, str(img_num).zfill(4) + '.npz'))                 
+                    self.scenename.append(x.strip())
+                    self.frameid.append(img_num)
+                    self.real_flags.append(False)
 
     def scene_list(self):
         return self.scenename
@@ -160,7 +177,7 @@ class SuctionDataset(Dataset):
         seg = np.array(Image.open(self.labelpath[index]))
         meta = scio.loadmat(self.metapath[index])
         scene = self.scenename[index]
-        normal = np.load(self.normalpath[index])
+        # normal = np.load(self.normalpath[index])
         try:
             intrinsic = meta['intrinsic_matrix']
             factor_depth = meta['factor_depth']
